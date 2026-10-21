@@ -1,5 +1,7 @@
 # Ferie & Disponibilità · Synlab Manifattura Firenze
 
+> **Progetto dimostrativo, non ufficiale.** Questa è una demo tecnica di un flusso di richiesta ferie e disponibilità: non è un prodotto SYNLAB e non è affiliata all'azienda. Non contiene dati reali di persone: gli account sono fittizi, le richieste di esempio sono inventate e le email sono simulate. Logo e nome SYNLAB identificano solo la sede a scopo illustrativo.
+
 App web per gestire ferie e disponibilità della **Radiologia di Synlab Manifattura Firenze**. Funziona da browser su **PC, iPhone/iPad, Android e macOS** (stessa interfaccia responsive, installabile sulla schermata Home).
 
 Il coordinatore può creare gli accessi del team direttamente dall'app, senza usare il terminale.
@@ -23,7 +25,7 @@ Nessuna dipendenza esterna: solo Python 3.8+ e il browser. I dati restano in `da
 python3 server.py
 ```
 
-Apri <http://localhost:8080>. Al primo avvio vengono creati quattro account dimostrativi:
+Apri <http://localhost:8080>. Al primo avvio vengono creati quattro account dimostrativi (fittizi, servono solo per provare l'app):
 
 ![Accesso Synlab Manifattura Firenze](screenshots/login-synlab.png)
 
@@ -306,7 +308,7 @@ Per un permesso con orario personalizzato, `POST /api/requests` accetta `slot: "
 
 ## Marchio e logo
 
-Il logo in `public/assets/synlab-logo-4c.png` è stato scaricato da [Wikimedia Commons](https://commons.wikimedia.org/wiki/File:SYNLAB_Logo.png), caricato da SYNLAB Marketing e pubblicato con licenza **CC BY-SA 4.0**. "SYNLAB" è un marchio registrato: la licenza del file non sostituisce l'autorizzazione del titolare. Per un uso pubblico o commerciale dell'app serve il consenso di SYNLAB; per questo prototipo interno il logo è usato solo per identificare la sede. La pagina ufficiale dei materiali è <https://www.synlab.com/about-synlab/press-media-relations/logos>.
+Il logo in `public/assets/synlab-logo-4c.png` è stato scaricato da [Wikimedia Commons](https://commons.wikimedia.org/wiki/File:SYNLAB_Logo.png), caricato da SYNLAB Marketing e pubblicato con licenza **CC BY-SA 4.0**. "SYNLAB" è un marchio registrato: la licenza del file non sostituisce l'autorizzazione del titolare. Per un uso pubblico o commerciale dell'app serve il consenso di SYNLAB; in questo repository dimostrativo il logo è usato solo per identificare la sede, senza alcun rapporto di affiliazione o approvazione da parte di SYNLAB. La pagina ufficiale dei materiali è <https://www.synlab.com/about-synlab/press-media-relations/logos>.
 
 ## Limiti noti
 
