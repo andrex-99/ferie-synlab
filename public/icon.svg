@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Ferie Synlab Manifattura Firenze">
+  <rect width="512" height="512" rx="112" fill="#005f96"/>
+  <rect x="112" y="132" width="288" height="272" rx="40" fill="#fffdf9"/>
+  <path d="M112 172a40 40 0 0 1 40-40h208a40 40 0 0 1 40 40v40H112z" fill="#003867"/>
+  <rect x="168" y="96" width="24" height="76" rx="12" fill="#fffdf9"/>
+  <rect x="320" y="96" width="24" height="76" rx="12" fill="#fffdf9"/>
+  <path d="M188 292l58 56 84-104" fill="none" stroke="#005f96" stroke-width="30" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

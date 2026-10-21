@@ -1,0 +1,437 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#f4f1ea">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Ferie SMF">
+<meta name="description" content="Ferie e disponibilità della Radiologia di Synlab Manifattura Firenze.">
+<title>Synlab Manifattura Firenze · Ferie</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="stylesheet" href="/styles.css?v=20261021u">
+</head>
+<body>
+
+<!-- ------------------------------- LOGIN ------------------------------- -->
+<div id="login-screen" class="login-screen" hidden>
+  <main class="login-card">
+    <div class="brand brand--lg">
+      <span class="brand-mark brand-mark--logo">
+        <img src="/assets/synlab-logo-4c.png" alt="SYNLAB" width="2233" height="510" decoding="async">
+      </span>
+      <span class="brand-text">
+        <span class="brand-org" id="login-org">Synlab</span>
+        <span class="brand-sub" id="login-sub">Manifattura Firenze · SYNLAB</span>
+      </span>
+    </div>
+
+    <h1 class="login-title">Bentornato.</h1>
+    <p class="login-lead">Accedi per chiedere ferie, aggiornare le disponibilità e vedere chi è assente.</p>
+
+    <form id="login-form" class="form" novalidate>
+      <label class="field">
+        <span>Email</span>
+        <input id="login-email" name="email" type="email" autocomplete="username" inputmode="email"
+               placeholder="nome@synlab.it" required>
+      </label>
+      <label class="field">
+        <span>PIN</span>
+        <input id="login-pin" name="pin" type="password" autocomplete="current-password"
+               inputmode="numeric" pattern="[0-9]*" maxlength="8" placeholder="••••" required>
+      </label>
+      <p id="login-error" class="form-error" role="alert" hidden></p>
+      <button id="login-submit" class="btn btn--primary btn--block" type="submit">Accedi</button>
+    </form>
+
+    <details id="demo-box" class="demo-box" hidden>
+      <summary>Account di prova</summary>
+      <p class="demo-hint">Tocca un account per compilare le credenziali. Cambia i PIN prima di usare l'app con persone reali.</p>
+      <ul id="demo-accounts" class="demo-list"></ul>
+    </details>
+
+    <p class="login-foot">I dati restano sul tuo server. Nessun servizio esterno oltre all'invio email.</p>
+  </main>
+</div>
+
+<!-- -------------------------------- APP -------------------------------- -->
+<div id="app-screen" class="app-screen" hidden>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">
+        <span class="brand-mark brand-mark--logo">
+          <img src="/assets/synlab-logo-4c.png" alt="SYNLAB" width="2233" height="510" decoding="async">
+        </span>
+        <span class="brand-text">
+          <span class="brand-org" id="top-org">Synlab</span>
+          <span class="brand-sub" id="top-sub">Manifattura Firenze · SYNLAB</span>
+        </span>
+      </div>
+
+      <nav class="tabs" id="tabs" aria-label="Sezioni">
+        <button class="tab is-active" data-view="calendar" type="button">Calendario</button>
+        <button class="tab" data-view="requests" type="button">Richieste <span class="tab-count" id="tab-requests-count" hidden></span></button>
+        <button class="tab" data-view="coord" type="button" id="tab-coord" hidden>Coordinamento <span class="tab-count" id="tab-coord-count" hidden></span></button>
+      </nav>
+
+      <div class="topbar-actions">
+        <button class="icon-btn" id="btn-help" type="button" aria-label="Guida rapida" title="Guida rapida">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="9"></circle>
+            <path d="M9.6 9.2a2.5 2.5 0 1 1 3.6 2.3c-.7.4-1.2 1-1.2 1.8v.3"></path>
+            <path d="M12 17h.01"></path>
+          </svg>
+        </button>
+        <button class="icon-btn" id="btn-bell" type="button" aria-label="Notifiche" aria-expanded="false">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M18 8a6 6 0 1 0-12 0c0 7-3 8-3 8h18s-3-1-3-8"></path>
+            <path d="M13.7 21a2 2 0 0 1-3.4 0"></path>
+          </svg>
+          <span class="badge" id="bell-badge" hidden></span>
+        </button>
+        <button class="user-chip" id="btn-user" type="button" aria-haspopup="menu" aria-expanded="false">
+          <span class="avatar" id="user-avatar" aria-hidden="true">--</span>
+          <span class="user-meta">
+            <span class="user-name" id="user-name">—</span>
+            <span class="user-role" id="user-role">—</span>
+          </span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <div class="popover" id="user-menu" role="menu" hidden>
+    <p class="popover-label" id="user-menu-email"></p>
+    <div class="theme-picker">
+      <span class="theme-picker-label" id="theme-label">Tema</span>
+      <div class="theme-options" role="group" aria-labelledby="theme-label">
+        <button class="theme-option" type="button" data-theme-choice="system" aria-pressed="false">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"></rect><path d="M8 21h8M12 17v4"></path></svg>
+          <span>Sistema</span>
+        </button>
+        <button class="theme-option" type="button" data-theme-choice="light" aria-pressed="false">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path></svg>
+          <span>Chiaro</span>
+        </button>
+        <button class="theme-option" type="button" data-theme-choice="dark" aria-pressed="false">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"></path></svg>
+          <span>Scuro</span>
+        </button>
+      </div>
+    </div>
+    <button class="menu-item" id="btn-tour" role="menuitem" type="button">
+      <svg class="menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M9.6 9.2a2.5 2.5 0 1 1 3.6 2.3c-.7.4-1.2 1-1.2 1.8v.3"></path><path d="M12 17h.01"></path></svg>
+      <span>Rivedi il tutorial</span>
+    </button>
+    <button class="menu-item" id="btn-appearance" role="menuitem" type="button">Colore e foto</button>
+    <button class="menu-item" id="btn-change-pin" role="menuitem" type="button">Cambia PIN</button>
+    <button class="menu-item" id="btn-install" role="menuitem" type="button" hidden>Installa sul dispositivo</button>
+    <button class="menu-item menu-item--danger" id="btn-logout" role="menuitem" type="button">Esci</button>
+  </div>
+
+  <div class="popover popover--notif" id="notif-panel" hidden>
+    <div class="popover-head">
+      <strong>Notifiche</strong>
+      <span class="muted small" id="notif-status"></span>
+    </div>
+    <div id="notif-list" class="notif-list"></div>
+  </div>
+
+  <main class="page">
+    <!-- CALENDARIO -->
+    <section class="view" id="view-calendar">
+      <div class="page-head">
+        <div>
+          <h1 class="page-title">Calendario del team</h1>
+          <p class="page-sub" id="calendar-sub">Seleziona i giorni, poi invia la richiesta al coordinatore.</p>
+        </div>
+        <div class="page-actions">
+          <a class="btn btn--ghost btn--sm" id="ics-link" href="#" download="assenze.ics" title="Scarica il calendario approvato">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"></path><path d="M7 10l5 5 5-5"></path><path d="M5 21h14"></path></svg>
+            Calendario .ics
+          </a>
+          <button class="btn btn--ghost btn--sm" id="btn-copy-ics" type="button">Copia link calendario</button>
+        </div>
+      </div>
+
+      <div class="calendar-layout">
+        <div class="card calendar-card">
+          <div class="cal-toolbar">
+            <div class="cal-title-wrap">
+              <h2 class="cal-title" id="cal-title">—</h2>
+              <button class="btn btn--ghost btn--xs" id="btn-today" type="button">Oggi</button>
+            </div>
+            <div class="cal-nav">
+              <button class="icon-btn icon-btn--round" id="btn-prev" type="button" aria-label="Mese precedente">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"></path></svg>
+              </button>
+              <button class="icon-btn icon-btn--round" id="btn-next" type="button" aria-label="Mese successivo">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>
+              </button>
+            </div>
+          </div>
+
+          <div class="cal-filters">
+            <div class="mode-toggle" role="group" aria-label="Modalità di selezione">
+              <button class="mode-btn is-active" data-mode="day" type="button" title="Tocca i singoli giorni">Giorni</button>
+              <button class="mode-btn" data-mode="range" type="button" title="Tocca inizio e fine periodo">Periodo</button>
+            </div>
+            <label class="person-filter">
+              <span class="sr-only">Filtra per persona</span>
+              <select id="person-filter" aria-label="Filtra il calendario per persona">
+                <option value="">Tutto il team</option>
+              </select>
+            </label>
+            <div class="legend" aria-label="Legenda: il colore identifica la persona, la lettera il tipo">
+              <span class="legend-item"><i class="swatch swatch--people" aria-hidden="true"></i>Colore persona</span>
+              <span class="legend-item"><i class="legend-glyph" aria-hidden="true">F</i>Ferie</span>
+              <span class="legend-item"><i class="legend-glyph" aria-hidden="true">P</i>Permesso</span>
+              <span class="legend-item"><i class="legend-glyph" aria-hidden="true">N</i>Non disp.</span>
+              <span class="legend-item"><i class="legend-glyph" aria-hidden="true">D</i>Disponibile</span>
+              <span class="legend-item"><i class="swatch swatch--pending" aria-hidden="true"></i>In attesa</span>
+            </div>
+          </div>
+
+          <div class="cal-scroll">
+            <div class="cal-grid" id="cal-grid" role="grid" aria-label="Calendario mensile"></div>
+          </div>
+        </div>
+
+        <aside class="side">
+          <div class="card request-card" id="request-card">
+            <div class="request-empty" id="request-empty">
+              <span class="empty-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="3"></rect><path d="M8 3v4M16 3v4M3 10h18"></path><path d="M12 13v5M9.5 15.5h5"></path></svg>
+              </span>
+              <h3>Nessun giorno selezionato</h3>
+              <p>Tocca uno o più giorni sul calendario, oppure parti da una settimana intera.</p>
+              <div class="quick-ranges">
+                <button class="btn btn--ghost btn--xs" data-range="week" type="button">Questa settimana</button>
+                <button class="btn btn--ghost btn--xs" data-range="next" type="button">Prossima settimana</button>
+              </div>
+            </div>
+
+            <form id="request-form" class="request-form" hidden>
+              <div class="request-head">
+                <h3>Nuova richiesta</h3>
+                <button class="btn btn--ghost btn--xs" id="btn-clear-selection" type="button">Svuota</button>
+              </div>
+
+              <div class="selected-list" id="selected-list"></div>
+
+              <fieldset class="segmented segmented--types" id="type-selector">
+                <legend>Tipo</legend>
+                <label class="segment">
+                  <input type="radio" name="type" value="ferie" checked>
+                  <span>Ferie</span>
+                </label>
+                <label class="segment">
+                  <input type="radio" name="type" value="permesso">
+                  <span>Permesso</span>
+                </label>
+                <label class="segment">
+                  <input type="radio" name="type" value="disponibilita">
+                  <span>Disponibilità</span>
+                </label>
+              </fieldset>
+
+              <label class="field slot-field" id="slot-field" hidden>
+                <span>Fascia</span>
+                <select id="request-slot">
+                  <option value="giornata">Giornata intera</option>
+                  <option value="mattina">Mattina</option>
+                  <option value="pomeriggio">Pomeriggio</option>
+                  <option value="orario">Orario personalizzato</option>
+                </select>
+              </label>
+
+              <div class="time-range" id="time-range-field" role="group" aria-label="Fascia oraria del permesso" hidden>
+                <label class="field">
+                  <span>Dalle</span>
+                  <input id="request-time-from" type="time" value="09:00">
+                </label>
+                <span class="time-range-sep" aria-hidden="true">–</span>
+                <label class="field">
+                  <span>Alle</span>
+                  <input id="request-time-to" type="time" value="13:00">
+                </label>
+                <p class="field-hint time-range-hint">La stessa fascia vale per tutti i giorni selezionati.</p>
+              </div>
+
+              <fieldset class="segmented segmented--sm" id="availability-selector" hidden>
+                <legend>Modifica</legend>
+                <label class="segment">
+                  <input type="radio" name="availability" value="non_disponibile" checked>
+                  <span>Non disponibile</span>
+                </label>
+                <label class="segment">
+                  <input type="radio" name="availability" value="disponibile">
+                  <span>Disponibile</span>
+                </label>
+              </fieldset>
+
+              <label class="field">
+                <span>Nota per il coordinatore <em>(facoltativa)</em></span>
+                <textarea id="request-note" name="note" maxlength="500" rows="3"
+                          placeholder="Es. ferie estive, cambio turno concordato…"></textarea>
+                <span class="field-count"><span id="note-count">0</span>/500</span>
+              </label>
+
+              <div class="conflict" id="conflict-box" hidden></div>
+
+              <div class="request-summary">
+                <span id="request-summary-text">—</span>
+                <span id="request-summary-days">—</span>
+              </div>
+
+              <button class="btn btn--primary btn--block" id="btn-submit-request" type="submit">
+                Invia richiesta al coordinatore
+              </button>
+              <p class="form-foot" id="request-submit-hint">Il coordinatore riceve una notifica via email e può approvare o rifiutare.</p>
+            </form>
+          </div>
+
+          <div class="card mini-card">
+            <div class="mini-head">
+              <h3>Prossime assenze</h3>
+              <span class="muted small">approvate</span>
+            </div>
+            <ul class="mini-list" id="upcoming-list"></ul>
+          </div>
+
+          <div class="card mini-card" id="coord-quick" hidden>
+            <div class="mini-head">
+              <h3>Da approvare</h3>
+              <span class="count-pill" id="coord-pending-pill">0</span>
+            </div>
+            <p class="mini-text" id="coord-pending-text">Nessuna richiesta in attesa.</p>
+            <button class="btn btn--soft btn--sm" id="btn-open-coord" type="button">Apri coordinamento</button>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <!-- RICHIESTE -->
+    <section class="view" id="view-requests" hidden>
+      <div class="page-head">
+        <div>
+          <h1 class="page-title">Le mie richieste</h1>
+          <p class="page-sub">Storico delle tue ferie e modifiche di disponibilità.</p>
+        </div>
+      </div>
+      <div id="requests-list" class="stack"></div>
+    </section>
+
+    <!-- COORDINAMENTO -->
+    <section class="view" id="view-coord" hidden>
+      <div class="page-head">
+        <div>
+          <h1 class="page-title">Coordinamento</h1>
+          <p class="page-sub">Approva o rifiuta le richieste del team. Ogni decisione invia un'email.</p>
+        </div>
+      </div>
+      <div class="stat-grid" id="coord-stats">
+        <div class="stat-card stat-card--accent">
+          <span class="stat-label">In attesa</span>
+          <strong class="stat-value" id="stat-pending">0</strong>
+          <span class="stat-hint">da decidere</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-label">Giorni approvati</span>
+          <strong class="stat-value" id="stat-days">0</strong>
+          <span class="stat-hint" id="stat-month">questo mese</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-label">Assenti oggi</span>
+          <strong class="stat-value" id="stat-away">0</strong>
+          <span class="stat-hint" id="stat-team">persone</span>
+        </div>
+      </div>
+
+      <div class="card team-card" id="team-card">
+        <div class="team-head">
+          <div>
+            <h3>Persone del team</h3>
+            <p class="mini-text" id="team-hint">Crea gli accessi per i colleghi della Radiologia.</p>
+            <p class="mini-text team-tip">Tocca una persona per cambiarne colore e foto.</p>
+          </div>
+          <button class="btn btn--primary btn--sm" id="btn-add-user" type="button">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+            Aggiungi persona
+          </button>
+        </div>
+        <ul class="team-list" id="team-list" aria-label="Persone con accesso all'app"></ul>
+      </div>
+
+      <div class="coord-layout">
+        <div class="stack" id="coord-pending"></div>
+        <aside class="side">
+          <div class="card mini-card">
+            <div class="mini-head"><h3>Ultime decisioni</h3></div>
+            <ul class="mini-list" id="coord-history"></ul>
+          </div>
+          <div class="card mini-card" id="outbox-card" hidden>
+            <div class="mini-head">
+              <h3>Registro email</h3>
+              <span class="mini-badge" id="outbox-badge">demo</span>
+            </div>
+            <div class="email-status"><span class="email-dot" id="email-dot"></span><span id="email-status-text">Verifico…</span></div>
+            <p class="mini-text" id="outbox-hint">Le email sono salvate qui perché non è configurato un servizio di invio.</p>
+            <button class="btn btn--ghost btn--sm btn--block" id="btn-test-email" type="button" hidden>Invia email di prova</button>
+            <ul class="mini-list" id="outbox-list"></ul>
+          </div>
+        </aside>
+      </div>
+    </section>
+  </main>
+
+  <div class="selection-bar" id="selection-bar" hidden>
+    <span><strong id="selection-count">0</strong> <span id="selection-label">giorni selezionati</span></span>
+    <button class="btn btn--primary btn--sm" id="btn-goto-form" type="button">Prepara richiesta</button>
+  </div>
+</div>
+
+<!-- -------------------------------- MODAL -------------------------------- -->
+<div class="modal" id="modal" hidden>
+  <div class="modal-backdrop" data-close-modal></div>
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <button class="icon-btn icon-btn--round modal-close" type="button" data-close-modal aria-label="Chiudi">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg>
+    </button>
+    <div id="modal-body"></div>
+  </div>
+</div>
+
+<!-- -------------------------------- TOUR -------------------------------- -->
+<div class="tour" id="tour" hidden>
+  <div class="tour-dim" aria-hidden="true"></div>
+  <div class="tour-spotlight" id="tour-spotlight" hidden aria-hidden="true"></div>
+  <section class="tour-card" id="tour-card" role="dialog" aria-modal="true"
+           aria-labelledby="tour-title" aria-describedby="tour-body" tabindex="-1">
+    <div class="tour-top">
+      <span class="tour-step" id="tour-step">1 di 6</span>
+      <button class="tour-skip" id="tour-skip" type="button">Salta</button>
+    </div>
+    <div class="tour-art" id="tour-art" aria-hidden="true"></div>
+    <h2 class="tour-title" id="tour-title"></h2>
+    <p class="tour-body" id="tour-body"></p>
+    <p class="tour-hint" id="tour-hint" hidden></p>
+    <div class="tour-bottom">
+      <div class="tour-dots" id="tour-dots" aria-hidden="true"></div>
+      <div class="tour-actions">
+        <button class="btn btn--ghost btn--sm" id="tour-prev" type="button">Indietro</button>
+        <button class="btn btn--primary btn--sm" id="tour-next" type="button">Avanti</button>
+      </div>
+    </div>
+    <p class="sr-only" id="tour-live" aria-live="polite"></p>
+  </section>
+</div>
+
+<div class="toasts" id="toasts" aria-live="polite" aria-atomic="false"></div>
+
+<script src="/app.js?v=20261021v"></script>
+</body>
+</html>
