@@ -1,0 +1,12 @@
+.git
+data
+screenshots
+tests
+tools
+.env
+.env.*
+__pycache__
+*.pyc
+.DS_Store
+render.yaml
+Dockerfile

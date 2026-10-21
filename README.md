@@ -42,6 +42,18 @@ Senza credenziali email l'app funziona in **modalità simulata**: le email vengo
 
 Nel database locale sono presenti alcune richieste di esempio (ferie, permesso e disponibilità) per esplorare subito calendario, coda del coordinatore e registro email. Per ripartire da zero cancella la cartella `data/`: al riavvio vengono ricreati solo i quattro account dimostrativi.
 
+## Demo online con un clic
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/andrex-99/ferie-synlab)
+
+Il pulsante crea su [Render](https://render.com) un servizio web gratuito partendo dal [render.yaml](render.yaml) e dal [Dockerfile](Dockerfile) di questo repository: serve un account Render (gratuito, **senza carta**) e l'autorizzazione a leggere il repository GitHub. Da lì il deploy parte da solo e si aggiorna a ogni push su `main`.
+
+Cosa aspettarsi dal piano gratuito:
+
+- il servizio va in pausa dopo **15 minuti senza visite** e riparte alla prima richiesta, con circa un minuto di attesa (un ping periodico su `/` lo tiene sveglio);
+- il disco è **temporaneo**: a ogni riavvio il database riparte da zero con i quattro account dimostrativi, quindi va benissimo per far provare l'app, non per raccogliere richieste vere;
+- per un uso reale servono un piano con disco persistente e le variabili email descritte in [Configurazione](#configurazione).
+
 ---
 
 ## Primo utilizzo: il tutorial guidato
