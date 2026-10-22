@@ -352,6 +352,18 @@ class FeatureTest(unittest.TestCase):
         self.assertEqual(status, 200, data)
         self.assertEqual(data["devices"], 0)
 
+    def test_07_url_pubblico_https_dietro_un_proxy(self):
+        request = urllib.request.Request(
+            self.base + "/api/config",
+            headers={"X-Forwarded-Proto": "https", "Host": "ferie-synlab.onrender.com"})
+        with urllib.request.urlopen(request) as response:
+            config = json.loads(response.read().decode("utf-8"))
+        self.assertEqual(config["base_url"], "https://ferie-synlab.onrender.com")
+
+        status, config = self.json_call(self.client(), "/api/config")
+        self.assertEqual(status, 200)
+        self.assertTrue(config["base_url"].startswith("http://"), config["base_url"])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -1070,7 +1070,11 @@ class Handler(BaseHTTPRequestHandler):
         if APP_BASE_URL:
             return APP_BASE_URL
         host = self.headers.get("Host", "localhost:%d" % PORT)
-        return "http://" + host
+        # Dietro un reverse proxy (Render, nginx, tunnel) la richiesta arriva in
+        # HTTP ma il link pubblico deve restare HTTPS.
+        forwarded = (self.headers.get("X-Forwarded-Proto") or "").split(",")[0].strip().lower()
+        scheme = "https" if forwarded == "https" else "http"
+        return "%s://%s" % (scheme, host)
 
     def send_bytes(self, data, content_type="application/octet-stream", status=200,
                    headers=None, download_name=None):
