@@ -56,6 +56,10 @@ Cosa aspettarsi dal piano gratuito:
 - il disco è **temporaneo**: a ogni riavvio il database riparte da zero con i quattro account dimostrativi, quindi va benissimo per far provare l'app, non per raccogliere richieste vere;
 - per un uso reale servono un piano con disco persistente e le variabili email descritte in [Configurazione](#configurazione).
 
+### Uso reale: sempre acceso, gratis
+
+[**docs/hosting.md**](docs/hosting.md) spiega come passare a una macchina **sempre accesa con disco persistente** senza spendere nulla (Oracle Cloud Always Free, oppure Google e2-micro): i file [deploy/docker-compose.yml](deploy/docker-compose.yml) e [deploy/Caddyfile](deploy/Caddyfile) avviano l'app con HTTPS automatico in due comandi, e funzionano anche senza un dominio tuo. Nella stessa guida c'è il confronto dei provider email gratuiti (Gmail, Brevo, Resend) con le variabili da copiare nel `.env`.
+
 ---
 
 ## Primo utilizzo: il tutorial guidato

@@ -1,0 +1,6 @@
+# SITE_ADDRESS arriva da .env: un dominio tuo (ferie.esempio.it) oppure un
+# nome gratuito che punta all'IP della VM (es. 158-101-23-45.sslip.io).
+{$SITE_ADDRESS} {
+	encode zstd gzip
+	reverse_proxy app:8080
+}

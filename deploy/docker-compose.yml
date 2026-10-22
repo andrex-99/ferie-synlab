@@ -1,0 +1,41 @@
+# App + HTTPS automatico su una VM (Oracle Always Free, Google e2-micro, ...).
+# Dalla radice del repository:
+#   sudo docker compose -f deploy/docker-compose.yml up -d --build
+# Le variabili si leggono da .env nella radice (vedi .env.example).
+
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    environment:
+      # Dentro il container l'app ascolta sempre su tutte le interfacce.
+      HOST: 0.0.0.0
+      PORT: "8080"
+    volumes:
+      # Database, chiavi VAPID e registro email restano sul disco della VM.
+      - ../data:/app/data
+    expose:
+      - "8080"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - app
+
+volumes:
+  caddy_data:
+  caddy_config:
