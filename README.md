@@ -48,7 +48,7 @@ Il calendario parte vuoto: le richieste compaiono man mano che le invii. Per rip
 
 [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/andrex-99/ferie-synlab)
 
-Il pulsante crea su [Render](https://render.com) un servizio web gratuito partendo dal [render.yaml](render.yaml) e dal [Dockerfile](Dockerfile) di questo repository: serve un account Render (gratuito, **senza carta**) e l'autorizzazione a leggere il repository GitHub. Da lì il deploy parte da solo; per aggiornarlo dopo un push usa **Manual Deploy → Deploy latest commit** nel pannello Render (oppure collega il repository all'account Render per avere la pubblicazione automatica a ogni push).
+Il pulsante crea su [Render](https://render.com) un servizio web gratuito partendo dal [render.yaml](render.yaml) e dal [Dockerfile](Dockerfile) di questo repository: serve un account Render (gratuito, **senza carta**) e l'autorizzazione a leggere il repository GitHub. Da lì il deploy parte da solo; per aggiornarlo dopo un push usa **Manual Deploy → Deploy latest commit** nel pannello Render. La pubblicazione automatica a ogni push funziona solo se il repository collegato ha il **webhook di Render** installato (GitHub → Settings → Webhooks): senza webhook Render non viene avvisato e i push restano senza deploy.
 
 Cosa aspettarsi dal piano gratuito:
 
