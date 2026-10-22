@@ -8,6 +8,7 @@ ENV PYTHONUNBUFFERED=1 \
 WORKDIR /app
 
 COPY server.py ./
+COPY webpush.py ./
 COPY public ./public
 
 # L'utente non privilegiato deve poter scrivere il database e la cartella email.

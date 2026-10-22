@@ -27,6 +27,8 @@
     history: [],
     team: [],
     notifications: [],
+    allowedTypes: ["ferie", "permesso", "disponibilita"],
+    pushDevices: 0,
     form: { type: "ferie", availability: "non_disponibile", slot: "giornata",
       timeFrom: "09:00", timeTo: "13:00", note: "" },
     mode: "day",
@@ -349,6 +351,8 @@
       const session = await api("/api/session");
       state.config = session.config;
       state.notifications = session.notifications || [];
+      state.allowedTypes = session.allowed_types || [];
+      state.pushDevices = session.push_devices || 0;
       showApp(session.user);
       await Promise.all([loadCalendar(), loadRequests(), loadCoord()]);
       renderNotifications();
@@ -399,6 +403,28 @@
     }
   }
 
+  function roleTypes(user) {
+    const map = (state.config && state.config.types_by_role) || {};
+    return (user && map[user.role]) || ["ferie", "permesso", "disponibilita"];
+  }
+
+  function applyRoleTypes(user) {
+    const allowed = state.allowedTypes && state.allowedTypes.length
+      ? state.allowedTypes : roleTypes(user);
+    state.allowedTypes = allowed;
+    $$("#type-selector .segment").forEach((label) => {
+      const input = label.querySelector("input");
+      label.hidden = !input || !allowed.includes(input.value);
+    });
+    const fieldset = $("#type-selector");
+    if (fieldset) {
+      fieldset.dataset.count = String(allowed.length);
+      fieldset.classList.toggle("is-single", allowed.length === 1);
+    }
+    if (!allowed.includes(state.form.type)) state.form.type = allowed[0] || "ferie";
+    if (state.me) renderSide();
+  }
+
   function showApp(user) {
     state.me = user;
     state.people = state.people || [];
@@ -413,6 +439,9 @@
     const isCoord = user.role === "coordinatore";
     $("#tab-coord").hidden = !isCoord;
     $("#coord-quick").hidden = !isCoord;
+    $("#btn-profile").hidden = !isCoord;
+    applyRoleTypes(user);
+    refreshPushLabel();
     const ics = state.config?.ics_url || "/calendar.ics";
     $("#ics-link").href = ics;
     switchView("calendar");
@@ -501,7 +530,9 @@
         view: "calendar",
         target: "#request-card",
         title: "Prepara e invia",
-        body: "Dopo la selezione, qui scegli Ferie, Permesso o Disponibilità, aggiungi una nota e invia. Il coordinatore riceve subito un'email.",
+        body: user.role === "professionista"
+          ? "Dopo la selezione qui indichi se sei disponibile o no, aggiungi una nota e invii. Il coordinatore riceve subito un'email."
+          : "Dopo la selezione qui scegli Ferie o Permesso, aggiungi una nota e invia. Il coordinatore riceve subito un'email.",
       },
       {
         icon: "inbox",
@@ -1098,9 +1129,15 @@
         <div class="req-foot">
           <span>${req.status === "pending"
             ? "In attesa del coordinatore"
-            : `Decisa il ${esc(new Date(req.decided_at).toLocaleDateString("it-IT"))}${req.decided_by_name ? " da " + esc(req.decided_by_name) : ""}`}
-            ${req.decision_note ? ` · “${esc(req.decision_note)}”` : ""}</span>
-          ${req.status === "pending" ? `<div class="req-actions"><button class="btn btn--ghost btn--xs" type="button" data-cancel="${req.id}">Annulla</button></div>` : ""}
+            : req.status === "cancelled"
+              ? esc(req.decision_note || "Annullata")
+              : `Decisa il ${esc(new Date(req.decided_at).toLocaleDateString("it-IT"))}${req.decided_by_name ? " da " + esc(req.decided_by_name) : ""}`}
+            ${req.status !== "cancelled" && req.decision_note ? ` · “${esc(req.decision_note)}”` : ""}</span>
+          ${req.status === "pending"
+            ? `<div class="req-actions"><button class="btn btn--ghost btn--xs" type="button" data-cancel="${req.id}">Annulla</button></div>`
+            : req.status === "approved"
+              ? `<div class="req-actions"><button class="btn btn--ghost btn--xs" type="button" data-withdraw="${req.id}">Ritira</button></div>`
+              : ""}
         </div>
       </article>`).join("");
   }
@@ -1164,6 +1201,35 @@
     } catch (error) {
       toast(error.message, "error");
     }
+  }
+
+  function withdrawRequest(id) {
+    const req = state.requests.find((item) => item.id === id);
+    if (!req) return;
+    openModal(`
+      <h3>Ritirare la richiesta?</h3>
+      <p class="modal-sub">${esc(typeLabel(req))} · ${esc(fmtPeriod(req.start, req.end))}</p>
+      <p class="field-hint">La richiesta era già approvata: i giorni spariranno dal calendario del team e il coordinatore vedrà che l'hai ritirata.</p>
+      <div class="modal-actions">
+        <button class="btn btn--ghost btn--sm" type="button" data-close-modal>Lascia com'è</button>
+        <button class="btn btn--danger btn--sm" id="btn-confirm-withdraw" type="button">Ritira richiesta</button>
+      </div>`, (root) => {
+      $("#btn-confirm-withdraw", root).addEventListener("click", async (event) => {
+        const button = event.currentTarget;
+        button.disabled = true;
+        button.textContent = "Ritiro…";
+        try {
+          await api(`/api/requests/${encodeURIComponent(id)}/cancel`, { method: "POST", body: {} });
+          closeModal();
+          toast("Richiesta ritirata: i giorni non sono più nel calendario.");
+          await Promise.all([loadCalendar(), loadRequests(), loadCoord()]);
+        } catch (error) {
+          toast(error.message, "error");
+          button.disabled = false;
+          button.textContent = "Ritira richiesta";
+        }
+      });
+    });
   }
 
   /* ------------------------------ coordinamento ------------------------------ */
@@ -1476,6 +1542,7 @@
     if (!target) return;
     if (state.me && target.id !== state.me.id && state.me.role !== "coordinatore") return;
     $("#user-menu").hidden = true;
+    const canDelete = !!(state.me && state.me.role === "coordinatore" && target.id !== state.me.id);
     const draft = { avatar: undefined, color: target.color };
     openModal(`
       <h3>Colore e foto</h3>
@@ -1494,6 +1561,10 @@
         <div class="color-grid">${colorPickerMarkup(target.color, target.id)}</div>
       </fieldset>
       <p class="field-hint">Se scegli un colore già usato, due persone nel calendario avranno lo stesso segno.</p>
+      ${canDelete ? `<div class="danger-zone">
+        <p class="field-hint">Eliminando l'accesso di ${esc(target.name)} vengono cancellate anche tutte le sue richieste.</p>
+        <button class="btn btn--danger btn--sm" id="btn-delete-user" type="button">Elimina accesso</button>
+      </div>` : ""}
       <p class="form-error" id="appearance-error" hidden></p>
       <div class="modal-actions">
         <button class="btn btn--ghost btn--sm" type="button" data-close-modal>Annulla</button>
@@ -1512,6 +1583,8 @@
         refresh();
       }));
       wirePhotoPicker(root, draft, refresh);
+      const deleteButton = $("#btn-delete-user", root);
+      if (deleteButton) deleteButton.addEventListener("click", () => confirmDeleteUser(target));
       $("#btn-save-appearance", root).addEventListener("click", async (event) => {
         const button = event.currentTarget;
         const error = $("#appearance-error", root);
@@ -1604,6 +1677,7 @@
             <span class="mini-name">${esc(req.user_name)}</span>
             <span class="mini-when">${esc(fmtShortRange(req.start, req.end))} · ${req.status === "approved" ? "approvata" : "rifiutata"}</span>
           </span>
+          <button class="btn btn--ghost btn--xs" type="button" data-reevaluate="${esc(req.id)}" title="Rivaluta questa decisione">Rivaluta</button>
         </li>`).join("");
     }
   }
@@ -1620,6 +1694,136 @@
       toast(error.message, "error");
       loadCoord();
     }
+  }
+
+  function openReevaluate(id) {
+    const req = (state.history || []).find((item) => item.id === id)
+      || (state.pending || []).find((item) => item.id === id);
+    if (!req) return;
+    const firstName = String(req.user_name || "").split(" ")[0];
+    openModal(`
+      <h3>Rivaluta la richiesta</h3>
+      <p class="modal-sub">${esc(req.user_name)} · ${esc(typeLabel(req))} · ${esc(fmtPeriod(req.start, req.end))}</p>
+      ${statusPill(req.status)}
+      <label class="field"><span>Nota per ${esc(firstName)} <em>(facoltativa)</em></span>
+        <textarea id="reeval-note" maxlength="500" rows="3" placeholder="Es. cambio turno concordato"></textarea></label>
+      <p class="field-hint">Cambiando l'esito ${esc(firstName)} riceverà una nuova email e una notifica. Con “Metti in attesa” la richiesta torna in coda e non viene inviato alcun esito.</p>
+      <div class="modal-actions">
+        <button class="btn btn--ghost btn--sm" id="btn-reeval-reopen" type="button">Metti in attesa</button>
+        <button class="btn btn--danger btn--sm" type="button" data-reeval="reject">Rifiuta</button>
+        <button class="btn btn--primary btn--sm" type="button" data-reeval="approve">Approva</button>
+      </div>`, (root) => {
+      $("#btn-reeval-reopen", root).addEventListener("click", async (event) => {
+        const button = event.currentTarget;
+        button.disabled = true;
+        button.textContent = "Riapro…";
+        try {
+          await api(`/api/requests/${encodeURIComponent(id)}/reopen`, { method: "POST", body: {} });
+          closeModal();
+          toast("Richiesta rimessa in attesa di decisione.");
+          await Promise.all([loadCoord(), loadCalendar(), loadRequests(), loadNotifications()]);
+        } catch (error) {
+          toast(error.message, "error");
+          button.disabled = false;
+          button.textContent = "Metti in attesa";
+        }
+      });
+      $$("[data-reeval]", root).forEach((button) => {
+        button.addEventListener("click", () => {
+          const note = $("#reeval-note", root).value;
+          closeModal();
+          decide(id, button.dataset.reeval, note);
+        });
+      });
+    });
+  }
+
+  function openProfile() {
+    if (!state.me) return;
+    $("#user-menu").hidden = true;
+    openModal(`
+      <h3>I miei dati</h3>
+      <p class="modal-sub">Nome ed email con cui ti vedono i colleghi. L'email è anche il nome utente per accedere.</p>
+      <form class="form" id="profile-form" novalidate>
+        <label class="field"><span>Nome e cognome</span>
+          <input id="profile-name" type="text" maxlength="80" autocomplete="name" value="${esc(state.me.name)}" required></label>
+        <label class="field"><span>Email</span>
+          <input id="profile-email" type="email" maxlength="120" autocomplete="email" value="${esc(state.me.email)}" required></label>
+        <p class="field-hint">Il PIN non cambia. Dalla prossima volta accedi con la nuova email.</p>
+        <p class="form-error" id="profile-error" hidden></p>
+        <div class="modal-actions">
+          <button class="btn btn--ghost btn--sm" type="button" data-close-modal>Annulla</button>
+          <button class="btn btn--primary btn--sm" type="submit">Salva</button>
+        </div>
+      </form>`, (root) => {
+      $("#profile-form", root).addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const error = $("#profile-error", root);
+        const submit = event.target.querySelector('button[type="submit"]');
+        const name = $("#profile-name", root).value.trim();
+        const email = $("#profile-email", root).value.trim();
+        error.hidden = true;
+        if (name.length < 2) {
+          error.textContent = "Inserisci nome e cognome.";
+          error.hidden = false;
+          return;
+        }
+        if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+          error.textContent = "L'email non è valida.";
+          error.hidden = false;
+          return;
+        }
+        submit.disabled = true;
+        submit.textContent = "Salvo…";
+        try {
+          const data = await api("/api/profile", { method: "POST", body: { name, email } });
+          applyUser(data.user);
+          $("#user-menu-email").textContent = data.user.email;
+          closeModal();
+          toast("Dati aggiornati.", "success");
+          await loadCalendar();
+          if (state.me.role === "coordinatore") {
+            renderTeam();
+            loadCoord();
+          }
+        } catch (err) {
+          error.textContent = err.message;
+          error.hidden = false;
+          submit.disabled = false;
+          submit.textContent = "Salva";
+        }
+      });
+    });
+  }
+
+  function confirmDeleteUser(user) {
+    if (!user || !state.me || user.id === state.me.id) return;
+    openModal(`
+      <h3>Eliminare ${esc(user.name)}?</h3>
+      <p class="modal-sub">L'accesso e tutte le sue richieste verranno cancellati. L'operazione non si può annullare.</p>
+      <p class="field-hint">Se vuoi solo cambiare colore o foto, chiudi questa finestra.</p>
+      <div class="modal-actions">
+        <button class="btn btn--ghost btn--sm" type="button" data-close-modal>Annulla</button>
+        <button class="btn btn--danger btn--sm" id="btn-confirm-delete" type="button">Elimina definitivamente</button>
+      </div>`, (root) => {
+      $("#btn-confirm-delete", root).addEventListener("click", async (event) => {
+        const button = event.currentTarget;
+        button.disabled = true;
+        button.textContent = "Elimino…";
+        try {
+          const data = await api(`/api/users/${encodeURIComponent(user.id)}/delete`,
+            { method: "POST", body: {} });
+          state.team = state.team.filter((item) => item.id !== user.id);
+          closeModal();
+          toast(`${user.name} eliminato${data.removed_requests ? ` con ${data.removed_requests} richieste` : ""}.`, "success");
+          await Promise.all([loadCoord(), loadCalendar(), loadRequests(), loadNotifications()]);
+        } catch (error) {
+          toast(error.message, "error");
+          button.disabled = false;
+          button.textContent = "Elimina definitivamente";
+        }
+      });
+    });
   }
 
   function renderStats() {
@@ -1712,6 +1916,117 @@
     }
   }
 
+  /* ------------------------------ notifiche push ------------------------------ */
+
+  function pushSupport() {
+    if (!("serviceWorker" in navigator) || !("PushManager" in window)) return "unsupported";
+    if (!window.isSecureContext) return "insecure";
+    return "ok";
+  }
+
+  function decodePushKey(base64) {
+    const padding = "=".repeat((4 - (base64.length % 4)) % 4);
+    const raw = atob((base64 + padding).replace(/-/g, "+").replace(/_/g, "/"));
+    return Uint8Array.from(raw, (char) => char.charCodeAt(0));
+  }
+
+  async function pushSubscription() {
+    if (pushSupport() !== "ok") return null;
+    try {
+      const registration = await navigator.serviceWorker.getRegistration();
+      if (!registration) return null;
+      return await registration.pushManager.getSubscription();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  async function refreshPushLabel() {
+    const label = $("#btn-push-label");
+    const button = $("#btn-push");
+    if (!label || !button) return;
+    const subscription = await pushSubscription();
+    label.textContent = subscription ? "Disattiva notifiche sul telefono" : "Attiva notifiche sul telefono";
+    button.title = subscription
+      ? "Le notifiche di conferma e rifiuto arrivano su questo dispositivo."
+      : "Ricevi conferma o rifiuto della richiesta anche senza aprire l'app.";
+  }
+
+  function pushHelp() {
+    const ios = /iPad|iPhone|iPod/.test(navigator.userAgent);
+    openModal(`
+      <h3>Notifiche sul telefono</h3>
+      <p class="modal-sub">${ios
+        ? "Su iPhone le notifiche funzionano solo dopo aver aggiunto l'app alla schermata Home (iOS 16.4 o successivo) e averla aperta da lì."
+        : "Questo browser non permette le notifiche push su questo indirizzo. Servono una connessione sicura (https) e un browser aggiornato."}</p>
+      <p class="field-hint">In ogni caso ricevi un'email a ogni conferma o rifiuto.</p>
+      <div class="modal-actions"><button class="btn btn--primary btn--sm" type="button" data-close-modal>Ho capito</button></div>`);
+  }
+
+  async function enablePush() {
+    if (pushSupport() !== "ok" || typeof Notification === "undefined") {
+      pushHelp();
+      return;
+    }
+    const permission = await Notification.requestPermission();
+    if (permission !== "granted") {
+      toast("Permesso negato: puoi riattivarlo dalle impostazioni del browser.", "warn");
+      return;
+    }
+    const key = await api("/api/push/key");
+    const registration = await navigator.serviceWorker.ready;
+    let subscription = await registration.pushManager.getSubscription();
+    if (!subscription) {
+      subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: decodePushKey(key.public_key),
+      });
+    }
+    const json = subscription.toJSON();
+    const data = await api("/api/push/subscribe", {
+      method: "POST",
+      body: { endpoint: json.endpoint, keys: json.keys,
+        device: (navigator.userAgent || "").slice(0, 100) },
+    });
+    state.pushDevices = data.devices || 1;
+    await refreshPushLabel();
+    toast("Notifiche attive: ti avviso qui quando il coordinatore decide.", "success");
+  }
+
+  async function disablePush() {
+    const subscription = await pushSubscription();
+    if (!subscription) {
+      await refreshPushLabel();
+      return;
+    }
+    const endpoint = subscription.endpoint;
+    try {
+      const data = await api("/api/push/unsubscribe", { method: "POST", body: { endpoint } });
+      state.pushDevices = data.devices || 0;
+    } catch (error) {
+      toast(error.message, "error");
+    }
+    await subscription.unsubscribe().catch(() => {});
+    await refreshPushLabel();
+    toast("Notifiche disattivate su questo dispositivo.");
+  }
+
+  async function togglePush(button) {
+    if (!state.me) return;
+    $("#user-menu").hidden = true;
+    if (button) button.disabled = true;
+    try {
+      const subscription = await pushSubscription();
+      if (subscription) await disablePush();
+      else await enablePush();
+    } catch (error) {
+      toast(error.message || "Non riesco ad attivare le notifiche.", "error");
+    } finally {
+      if (button) button.disabled = false;
+      await refreshPushLabel();
+    }
+  }
+
   /* ------------------------------ utente ------------------------------ */
 
   function handleExpired() {
@@ -1739,6 +2054,8 @@
       const data = await api("/api/login", { method: "POST", body: { email, pin } });
       state.config = data.config;
       state.notifications = data.notifications || [];
+      state.allowedTypes = data.allowed_types || [];
+      state.pushDevices = data.push_devices || 0;
       $("#login-pin").value = "";
       showApp(data.user);
       await Promise.all([loadCalendar(), loadRequests(), loadCoord()]);
@@ -1830,7 +2147,9 @@
     }, { passive: false });
     $("#btn-logout").addEventListener("click", logout);
     $("#btn-change-pin").addEventListener("click", openPinModal);
+    $("#btn-profile").addEventListener("click", openProfile);
     $("#btn-appearance").addEventListener("click", () => openAppearance(state.me));
+    $("#btn-push").addEventListener("click", (event) => togglePush(event.currentTarget));
     $("#btn-user").addEventListener("click", () => {
       const menu = $("#user-menu");
       const open = menu.hidden;
@@ -1946,8 +2265,18 @@
     $("#request-form").addEventListener("submit", submitRequest);
 
     $("#requests-list").addEventListener("click", (event) => {
-      const button = event.target.closest("[data-cancel]");
-      if (button) cancelRequest(button.dataset.cancel);
+      const cancel = event.target.closest("[data-cancel]");
+      if (cancel) {
+        cancelRequest(cancel.dataset.cancel);
+        return;
+      }
+      const withdraw = event.target.closest("[data-withdraw]");
+      if (withdraw) withdrawRequest(withdraw.dataset.withdraw);
+    });
+
+    $("#coord-history").addEventListener("click", (event) => {
+      const button = event.target.closest("[data-reevaluate]");
+      if (button) openReevaluate(button.dataset.reevaluate);
     });
 
     $("#btn-add-user").addEventListener("click", openAddUser);
@@ -2084,7 +2413,9 @@
     });
 
     if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
-      navigator.serviceWorker.register("/sw.js").catch(() => { /* offline opzionale */ });
+      navigator.serviceWorker.register("/sw.js")
+        .then(() => refreshPushLabel())
+        .catch(() => { /* offline opzionale */ });
     }
 
     boot();

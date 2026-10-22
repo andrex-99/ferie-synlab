@@ -1,7 +1,7 @@
 /* Cache di base: l'app resta utilizzabile anche con rete instabile.
    Le richieste API non vengono mai messe in cache. */
-const CACHE = "ferie-shell-v36";
-const SHELL = ["/", "/styles.css?v=20261021u", "/app.js?v=20261021v", "/manifest.webmanifest", "/icon.svg", "/assets/synlab-logo-4c.png"];
+const CACHE = "ferie-shell-v37";
+const SHELL = ["/", "/styles.css?v=20261022a", "/app.js?v=20261022a", "/manifest.webmanifest", "/icon.svg", "/assets/synlab-logo-4c.png"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -15,6 +15,41 @@ self.addEventListener("activate", (event) => {
       .then((keys) => Promise.all(keys.filter((key) => key !== CACHE).map((key) => caches.delete(key))))
       .then(() => self.clients.claim())
   );
+});
+
+/* Notifiche push: conferma o rifiuto della richiesta.
+   Il payload arriva cifrato (aes128gcm) e il browser lo consegna già in chiaro. */
+self.addEventListener("push", (event) => {
+  let data = {};
+  try {
+    data = event.data ? event.data.json() : {};
+  } catch (_) {
+    data = { body: event.data ? event.data.text() : "" };
+  }
+  const title = data.title || "Ferie";
+  event.waitUntil(self.registration.showNotification(title, {
+    body: data.body || "",
+    tag: data.tag || "ferie",
+    icon: "/icon-192.png",
+    badge: "/icon-192.png",
+    data: { url: data.url || "/" },
+  }));
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const target = new URL((event.notification.data && event.notification.data.url) || "/",
+    self.location.origin).href;
+  event.waitUntil((async () => {
+    const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+    for (const client of windows) {
+      if (client.url.startsWith(self.location.origin)) {
+        await client.focus();
+        return;
+      }
+    }
+    if (self.clients.openWindow) await self.clients.openWindow(target);
+  })());
 });
 
 self.addEventListener("fetch", (event) => {

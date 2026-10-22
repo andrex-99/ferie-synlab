@@ -213,10 +213,12 @@ class ApiTest(unittest.TestCase):
         self.assertIn("action=reject", html)
 
 
-        # niente doppia decisione
-        status, _ = self.json_call(coordinator, "/api/requests/%s/decision" % request_id, "POST",
-                                   {"decision": "reject"})
-        self.assertEqual(status, 409)
+        # il coordinatore può rivalutare una decisione già presa
+        status, data = self.json_call(coordinator, "/api/requests/%s/decision" % request_id, "POST",
+                                      {"decision": "approve", "note": "Confermata"})
+        self.assertEqual(status, 200, data)
+        self.assertEqual(data["request"]["status"], "approved")
+        self.assertEqual(data["request"]["decision_note"], "Confermata")
 
     def test_03_rifiuto_non_entra_in_calendario(self):
         sara = self.login("sara@studio.it")
@@ -293,8 +295,12 @@ class ApiTest(unittest.TestCase):
         def worker(index, email):
             opener = self.login(email)
             day = (base_day + timedelta(days=index)).isoformat()
-            status, data = self.json_call(opener, "/api/requests", "POST",
-                                          {"type": "ferie", "dates": [day], "note": "concorrenza"})
+            if email == "sara@studio.it":
+                payload = {"type": "disponibilita", "availability": "non_disponibile",
+                           "dates": [day], "note": "concorrenza"}
+            else:
+                payload = {"type": "ferie", "dates": [day], "note": "concorrenza"}
+            status, data = self.json_call(opener, "/api/requests", "POST", payload)
             results[email] = (status, data.get("request", {}).get("id"), day)
 
         threads = [threading.Thread(target=worker, args=(index, email))

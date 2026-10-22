@@ -9,11 +9,11 @@ Il coordinatore può creare gli accessi del team direttamente dall'app, senza us
 Flusso completo:
 
 1. Il dipendente o il libero professionista accede e seleziona i giorni sul calendario.
-2. Sceglie **Ferie**, **Permesso** (giornata intera, mattina, pomeriggio o un orario personalizzato) oppure **Disponibilità** (non disponibile / disponibile) e aggiunge una nota.
+2. Sceglie **Ferie**, **Permesso** (giornata intera, mattina, pomeriggio o un orario personalizzato) oppure **Disponibilità** (non disponibile / disponibile) e aggiunge una nota. I tipi dipendono dal ruolo: i dipendenti chiedono ferie e permessi, i liberi professionisti comunicano solo la disponibilità.
 3. Il coordinatore riceve un'**email** con il riepilogo e un link per **approvare o rifiutare**.
-4. Alla decisione parte un'**email di esito** al richiedente (con file `.ics` se approvata).
+4. Alla decisione parte un'**email di esito** al richiedente (con file `.ics` se approvata) e, se l'ha attivata, una **notifica push** sul telefono.
 5. I giorni approvati compaiono nel **calendario condiviso** visibile a tutti, e restano disponibili come calendario `.ics` iscrivibile su iPhone/Android/Google Calendar.
-6. Il coordinatore ha una coda con contatori, statistiche del mese e il registro di tutte le email inviate.
+6. Il coordinatore ha una coda con contatori, statistiche del mese e il registro di tutte le email inviate; può **rivalutare** una decisione già presa, modificare i propri dati e **eliminare** gli accessi.
 
 Nessuna dipendenza esterna: solo Python 3.8+ e il browser. I dati restano in `data/db.json`.
 
@@ -100,6 +100,15 @@ Note utili:
 
 ---
 
+## Notifiche sul telefono
+
+Oltre all'email, ogni persona può ricevere una notifica push quando il coordinatore approva o rifiuta una richiesta: menu utente → **Attiva notifiche sul telefono** e conferma il permesso del browser. La notifica si tocca e apre l'app direttamente sulle richieste.
+
+- Serve una connessione **HTTPS** (o `localhost`): su un indirizzo `http://` di rete locale i browser non permettono le notifiche.
+- Su **iPhone/iPad** funzionano da iOS 16.4 e solo con l'app aggiunta alla schermata Home.
+- Le chiavi VAPID sono generate al primo uso in `data/vapid.json` (non versionare questo file). Se il server riparte da un disco vuoto, le chiavi cambiano e i dispositivi vanno riattivati.
+- Se le notifiche non arrivano resta comunque l'email: le due cose sono indipendenti.
+
 ## Configurazione
 
 Copia `.env.example` in `.env` e compila solo ciò che ti serve.
@@ -126,6 +135,7 @@ cp .env.example .env
 | `SMTP_STARTTLS` | `1` (default, porta 587) oppure `0` per SSL diretto (porta 465) |
 | `COORDINATOR_EMAILS` | Email aggiuntive che ricevono le richieste, separate da virgola |
 | `REMINDER_HOURS` | Dopo quante ore inviare un promemoria al coordinatore per una richiesta ancora in attesa (default `24`, `0` per disattivarlo) |
+| `VAPID_SUBJECT` | Contatto (`mailto:` o URL) incluso nelle notifiche push; default `MAIL_FROM` |
 
 Sono supportati sia **Resend** sia un normale **SMTP**. Senza nessuno dei due resta attiva la modalità simulata.
 
@@ -248,7 +258,8 @@ La scelta resta memorizzata nel browser del dispositivo e non modifica quella de
 python3 -m unittest discover -s tests -v
 ```
 
-Le **12 verifiche** avviano un server isolato con una cartella dati temporanea e coprono accesso e permessi, creazione richiesta, permessi con fascia oraria, **orario personalizzato** (normalizzazione, validazione, calendario ed email), approvazione dal link email anche senza login, rifiuto, calendario condiviso, notifiche, statistiche del coordinatore, reinvio dal registro email, file `.ics`, creazione utenti riservata al coordinatore, login del nuovo utente, colori e foto profilo (permessi, validazione, rimozione, accesso alle immagini), e il riuso corretto delle connessioni HTTP (keep-alive).
+Le **26 verifiche** avviano un server isolato con una cartella dati temporanea e coprono accesso e permessi, creazione richiesta, permessi con fascia oraria, **orario personalizzato** (normalizzazione, validazione, calendario ed email), approvazione dal link email anche senza login, rifiuto, calendario condiviso, notifiche, statistiche del coordinatore, reinvio dal registro email, file `.ics`, creazione utenti riservata al coordinatore, login del nuovo utente, colori e foto profilo (permessi, validazione, rimozione, accesso alle immagini), il riuso corretto delle connessioni HTTP (keep-alive), i **tipi di richiesta per ruolo**, il **ritiro di una richiesta approvata**, la **rivalutazione e riapertura** delle decisioni, la **modifica dei propri dati**, l'**eliminazione di un accesso** con le sue richieste e le **notifiche push** (chiavi VAPID, iscrizione, disiscrizione, decisione con servizio push irraggiungibile).
+I test della crittografia (`tests/test_webpush.py`) verificano la cifratura `aes128gcm` e la firma ES256 contro i vettori ufficiali di RFC 8291 e RFC 7515.
 
 ---
 
@@ -281,7 +292,8 @@ In produzione conviene avviarlo con `systemd`, `launchd` o `tmux`/`screen` e met
 ## Struttura del progetto
 
 ```
-server.py              server HTTP + API + email + ICS (solo stdlib)
+server.py              server HTTP + API + email + ICS + notifiche push (solo stdlib)
+webpush.py             cifratura Web Push, VAPID e firma ES256 (solo stdlib)
 public/index.html      interfaccia
 public/styles.css      stile responsive, tema chiaro/scuro, animazioni e tutorial (safe-area iOS)
 public/app.js          logica calendario, richieste, coordinamento
@@ -290,8 +302,11 @@ public/icon.svg        icona calendario
 public/assets/synlab-logo-4c.png  logo SYNLAB usato nell'intestazione
 tools/make_icons.py    rigenera le icone PNG
 tests/test_api.py      test end-to-end dell'API (stdlib unittest)
+tests/test_features.py test delle funzioni per ruolo, account e push
+tests/test_webpush.py  vettori ufficiali RFC 8291 / RFC 7515
 data/                  creato al primo avvio (non versionare)
 data/avatars/          foto profilo caricate dall'app
+data/vapid.json        chiavi VAPID per le notifiche push (generate al primo uso)
 ```
 
 ## API principali
@@ -303,12 +318,18 @@ data/avatars/          foto profilo caricate dall'app
 | `GET` | `/api/calendar?from&to` | eventi visibili nel periodo |
 | `POST` | `/api/requests` | crea richiesta e notifica i coordinatori |
 | `GET` | `/api/requests` | le mie richieste |
-| `POST` | `/api/requests/:id/cancel` | annulla una richiesta in attesa |
+| `POST` | `/api/requests/:id/cancel` | annulla una richiesta in attesa o **ritira una approvata** |
 | `GET` | `/api/requests/pending` | coda e statistiche del coordinatore |
-| `POST` | `/api/requests/:id/decision` | approva o rifiuta (coordinatore) |
+| `POST` | `/api/requests/:id/decision` | approva, rifiuta o **rivaluta** una decisione presa (coordinatore) |
+| `POST` | `/api/requests/:id/reopen` | rimette in attesa una richiesta già decisa (coordinatore) |
+| `POST` | `/api/profile` | modifica nome ed email del proprio account |
 | `GET` | `/api/users` | elenco persone e palette colori (coordinatore) |
 | `POST` | `/api/users` | crea un accesso con colore e foto (coordinatore) |
+| `POST` | `/api/users/:id/delete` | elimina un accesso e le sue richieste (coordinatore) |
 | `POST` | `/api/users/:id/appearance` | cambia colore e foto (coordinatore o sé stessi) |
+| `GET` | `/api/push/key` | chiave pubblica VAPID per le notifiche push |
+| `POST` | `/api/push/subscribe` | salva la sottoscrizione push di un dispositivo |
+| `POST` | `/api/push/unsubscribe` | rimuove la sottoscrizione push |
 | `GET` | `/avatar/:file` | foto profilo, solo con sessione attiva |
 | `GET` | `/api/outbox` | registro email (coordinatore) |
 | `POST` | `/api/outbox/:id/resend` | reinvia un'email dal registro |
@@ -325,7 +346,7 @@ Il logo in `public/assets/synlab-logo-4c.png` è stato scaricato da [Wikimedia C
 ## Limiti noti
 
 - Pensata per un singolo team/organizzazione (non multi-azienda).
-- La creazione dall'app non elimina gli account dimostrativi già presenti: usa `removeuser` per rimuoverli prima dell'uso reale.
-- Le richieste approvate non si annullano dall'app: per ora va chiesto al coordinatore.
+- Le notifiche push richiedono **HTTPS**; su iPhone funzionano da iOS 16.4 e solo con l'app aggiunta alla schermata Home. Sui server con disco temporaneo (come il piano gratuito di Render) le chiavi VAPID cambiano a ogni riavvio, quindi i dispositivi vanno riiscritti.
+- Eliminare un accesso cancella anche le sue richieste (storico compreso): l'operazione non si può annullare.
 - Nessuna integrazione con sistemi di timbratura o payroll.
 - Il registro email conserva gli ultimi 100 messaggi (HTML incluso) in `data/outbox/`: non contiene dati sensibili oltre a nomi, date e note già presenti nel database.

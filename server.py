@@ -41,6 +41,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlparse
 
+import webpush
+
 ROOT = Path(__file__).resolve().parent
 PUBLIC_DIR = ROOT / "public"
 
@@ -116,6 +118,7 @@ DB_PATH = DATA_DIR / "db.json"
 SECRET_PATH = DATA_DIR / "secret.key"
 OUTBOX_DIR = DATA_DIR / "outbox"
 AVATAR_DIR = DATA_DIR / "avatars"
+VAPID_PATH = DATA_DIR / "vapid.json"
 
 # Le foto sono già ridimensionate dal browser: il limite protegge il database
 # e il server da file enormi o contraffatti.
@@ -143,6 +146,8 @@ SMTP_STARTTLS = os.environ.get("SMTP_STARTTLS", "1") not in ("0", "false", "no")
 COORDINATOR_EMAILS = [e.strip().lower() for e in os.environ.get("COORDINATOR_EMAILS", "").split(",") if e.strip()]
 MAX_SESSION_DAYS = 30
 REMINDER_HOURS = int(os.environ.get("REMINDER_HOURS", "24") or 0)
+# Contatto richiesto da VAPID nelle notifiche push (mailto: o https:).
+VAPID_SUBJECT = os.environ.get("VAPID_SUBJECT", "").strip()
 
 
 def email_configured():
@@ -216,7 +221,8 @@ def new_id(prefix=""):
 
 
 def blank_db():
-    return {"users": [], "requests": [], "outbox": [], "seeded": True, "created_at": now_iso()}
+    return {"users": [], "requests": [], "outbox": [], "push": [], "seeded": True,
+            "created_at": now_iso()}
 
 
 def load_db():
@@ -234,6 +240,7 @@ def load_db():
         db.setdefault("users", [])
         db.setdefault("requests", [])
         db.setdefault("outbox", [])
+        db.setdefault("push", [])
         db.setdefault("seeded", False)
         return db
 
@@ -295,6 +302,20 @@ def valid_email(value):
 
 def is_coordinator(user):
     return bool(user) and (user.get("role") == ROLE_COORD or user.get("email", "").lower() in COORDINATOR_EMAILS)
+
+
+def allowed_types(user):
+    """Tipi di richiesta ammessi per ruolo.
+
+    I professionisti comunicano solo la disponibilità, i dipendenti chiedono
+    ferie e permessi. Il coordinatore mantiene tutti i tipi.
+    """
+    role = (user or {}).get("role")
+    if is_coordinator(user):
+        return list(TYPE_LABELS)
+    if role == ROLE_FREELANCE:
+        return ["disponibilita"]
+    return ["ferie", "permesso"]
 
 
 def avatar_url(user):
@@ -533,6 +554,7 @@ def serialize_request(db, req):
         "decided_at": req.get("decided_at"),
         "decided_by_name": decider.get("name") if decider else None,
         "decision_note": req.get("decision_note", ""),
+        "reopenable": req.get("status") in ("approved", "rejected"),
         "label": TYPE_LABELS.get(req.get("type"), "Richiesta"),
         "availability_label": AVAIL_LABELS.get(req.get("availability", "")),
     }
@@ -1195,6 +1217,16 @@ class Handler(BaseHTTPRequestHandler):
             return self.api_create_user()
         if route.startswith("users/") and route.endswith("/appearance") and method == "POST":
             return self.api_update_appearance(route[len("users/"):-len("/appearance")])
+        if route == "profile" and method == "POST":
+            return self.api_update_profile()
+        if route.startswith("users/") and route.endswith("/delete") and method == "POST":
+            return self.api_delete_user(route[len("users/"):-len("/delete")])
+        if route == "push/key" and method == "GET":
+            return self.api_push_key()
+        if route == "push/subscribe" and method == "POST":
+            return self.api_push_subscribe()
+        if route == "push/unsubscribe" and method == "POST":
+            return self.api_push_unsubscribe()
         if route == "outbox" and method == "GET":
             return self.api_outbox()
         if route.startswith("outbox/") and route.endswith("/resend") and method == "POST":
@@ -1207,6 +1239,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.api_cancel(parts[1])
             if len(parts) == 3 and parts[2] == "decision" and method == "POST":
                 return self.api_decision(parts[1])
+            if len(parts) == 3 and parts[2] == "reopen" and method == "POST":
+                return self.api_reopen(parts[1])
         raise ApiError(404, "Endpoint non trovato")
 
     def public_config(self):
@@ -1231,6 +1265,7 @@ class Handler(BaseHTTPRequestHandler):
             "ics_url": "/calendar.ics?t=" + ics_feed_token(),
             "roles": list(ROLES),
             "palette": COLORS,
+            "types_by_role": {role: allowed_types({"role": role}) for role in ROLES},
         }
 
     def api_config(self):
@@ -1242,7 +1277,9 @@ class Handler(BaseHTTPRequestHandler):
         if not user:
             raise ApiError(401, "Non autenticato")
         self.send_json({"user": public_user(user), "config": self.public_config(),
-                        "notifications": build_notifications(db, user)})
+                        "notifications": build_notifications(db, user),
+                        "allowed_types": allowed_types(user),
+                        "push_devices": len(push_subscriptions(user))})
 
     def api_login(self):
         if not self.same_origin():
@@ -1264,7 +1301,9 @@ class Handler(BaseHTTPRequestHandler):
             raise ApiError(401, "Email o PIN non corretti")
         LOGIN_ATTEMPTS.pop(ip, None)
         self.send_json({"user": public_user(user), "config": self.public_config(),
-                        "notifications": build_notifications(db, user)},
+                        "notifications": build_notifications(db, user),
+                        "allowed_types": allowed_types(user),
+                        "push_devices": len(push_subscriptions(user))},
                        cookie=make_session(user))
 
     def _register_failure(self, ip):
@@ -1329,6 +1368,9 @@ class Handler(BaseHTTPRequestHandler):
         req_type = data.get("type")
         if req_type not in TYPE_LABELS:
             raise ApiError(400, "Il tipo di richiesta non è valido")
+        if req_type not in allowed_types(user):
+            labels = " e ".join(TYPE_LABELS[t].lower() for t in allowed_types(user))
+            raise ApiError(403, "Il tuo profilo può inviare solo: " + labels)
         raw_dates = data.get("dates")
         if not isinstance(raw_dates, list) or not raw_dates:
             raise ApiError(400, "Seleziona almeno un giorno sul calendario")
@@ -1419,23 +1461,34 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json(payload, 201)
 
     def api_cancel(self, rid):
+        """Annulla una richiesta: il richiedente anche se approvata, il coordinatore sempre."""
         with DB_LOCK:
             db = load_db()
             user = self.require_user(db)
             req = next((r for r in db["requests"] if r["id"] == rid), None)
             if not req:
                 raise ApiError(404, "Richiesta non trovata")
-            if req["user_id"] != user["id"] and not is_coordinator(user):
+            owner = req["user_id"] == user["id"]
+            if not owner and not is_coordinator(user):
                 raise ApiError(403, "Non puoi annullare questa richiesta")
-            if req.get("status") != "pending":
-                raise ApiError(409, "Solo le richieste in attesa possono essere annullate")
+            status = req.get("status")
+            if status == "cancelled":
+                raise ApiError(409, "Questa richiesta è già annullata")
+            if owner and status not in ("pending", "approved"):
+                raise ApiError(409, "Puoi ritirare solo una richiesta in attesa o già approvata")
+            if owner and status == "approved":
+                note = "Ritirata dal richiedente dopo l'approvazione"
+            elif owner:
+                note = "Annullata dal richiedente"
+            else:
+                note = "Annullata dal coordinatore"
             req["status"] = "cancelled"
             req["decided_at"] = now_iso()
             req["decided_by"] = user["id"]
-            req["decision_note"] = ("Annullata dal richiedente" if req["user_id"] == user["id"]
-                                    else "Annullata dal coordinatore")
+            req["decision_note"] = note
             save_db(db)
             serialized = serialize_request(db, req)
+        log("Richiesta %s annullata da %s" % (rid, user.get("name")))
         self.send_json({"request": serialized})
 
     def api_decision(self, rid):
@@ -1450,8 +1503,8 @@ class Handler(BaseHTTPRequestHandler):
             req = next((r for r in db["requests"] if r["id"] == rid), None)
             if not req:
                 raise ApiError(404, "Richiesta non trovata")
-            if req.get("status") != "pending":
-                raise ApiError(409, "Questa richiesta è già stata gestita")
+            if req.get("status") == "cancelled":
+                raise ApiError(409, "Questa richiesta è stata annullata")
             requester = self._record_decision(db, req, coord, decision, note)
             serialized = serialize_request(db, req)
             outcome = (requester, dict(req), coord, note) if requester else None
@@ -1476,9 +1529,19 @@ class Handler(BaseHTTPRequestHandler):
         if req["status"] == "approved":
             content = request_ics(req, requester)
             attachments = [("richiesta-%s.ics" % req["id"], base64.b64encode(content.encode()).decode())]
+        decided = parse_iso(req.get("decided_at"))
+        stamp = int(decided.timestamp()) if decided else int(time.time())
         send_mail(requester["email"], subject, body, text, attachments,
                   reply_to=(coord.get("email") or MAIL_REPLY_TO or None),
-                  idempotency_key="outcome-%s" % req["id"])
+                  idempotency_key="outcome-%s-%s" % (req["id"], stamp))
+        days = [parse_day(day) for day in req.get("dates", []) if parse_day(day)]
+        approved = req["status"] == "approved"
+        notify_push(requester.get("id"), push_payload(
+            "Richiesta approvata" if approved else "Richiesta rifiutata",
+            "%s · %s%s" % (TYPE_LABELS.get(req.get("type"), "Richiesta"),
+                            fmt_dates(days),
+                            " · " + note if note else ""),
+            "/", "req-" + req["id"]))
 
     def api_change_pin(self):
         data = self.read_json()
@@ -1632,6 +1695,111 @@ class Handler(BaseHTTPRequestHandler):
             save_db(db)
         self.send_json({"ok": True})
 
+    def api_reopen(self, rid):
+        """Rimette in attesa una richiesta già decisa per rivalutarla."""
+        with DB_LOCK:
+            db = load_db()
+            coord = self.require_coordinator(db)
+            req = next((r for r in db["requests"] if r["id"] == rid), None)
+            if not req:
+                raise ApiError(404, "Richiesta non trovata")
+            if req.get("status") not in ("approved", "rejected"):
+                raise ApiError(409, "Solo una richiesta già decisa può tornare in attesa")
+            req["status"] = "pending"
+            req["decided_at"] = None
+            req["decided_by"] = None
+            req["decision_note"] = ""
+            save_db(db)
+            serialized = serialize_request(db, req)
+        log("Richiesta %s riaperta da %s" % (rid, coord.get("name")))
+        self.send_json({"request": serialized})
+
+    def api_update_profile(self):
+        """Nome ed email del proprio account (le credenziali di accesso restano invariate)."""
+        data = self.read_json()
+        name = clean_text(data.get("name"), 80)
+        email = clean_text(data.get("email"), 120).lower()
+        if len(name) < 2:
+            raise ApiError(400, "Inserisci nome e cognome")
+        if not valid_email(email):
+            raise ApiError(400, "L'email non è valida")
+        with DB_LOCK:
+            db = load_db()
+            user = self.require_user(db)
+            other = find_user(db, email=email)
+            if other and other["id"] != user["id"]:
+                raise ApiError(409, "Esiste già una persona con questa email")
+            before = (user.get("name"), user.get("email"))
+            user["name"], user["email"] = name, email
+            save_db(db)
+            updated = public_user(user)
+        if before != (name, email):
+            log("Dati account aggiornati per %s: %s <%s>" % (user["id"], name, email))
+        self.send_json({"user": updated})
+
+    def api_delete_user(self, uid):
+        """Elimina un accesso e le sue richieste. Non si può eliminare l'ultimo coordinatore."""
+        with DB_LOCK:
+            db = load_db()
+            coord = self.require_coordinator(db)
+            target = find_user(db, uid=uid)
+            if not target:
+                raise ApiError(404, "Persona non trovata")
+            if target["id"] == coord["id"]:
+                raise ApiError(400, "Non puoi eliminare il tuo account: chiedilo a un altro coordinatore")
+            if is_coordinator(target) and len(coordinators(db)) <= 1:
+                raise ApiError(400, "Deve restare almeno un coordinatore")
+            avatar = target.get("avatar")
+            requests = [r for r in db["requests"] if r["user_id"] == uid]
+            db["users"] = [u for u in db["users"] if u["id"] != uid]
+            db["requests"] = [r for r in db["requests"] if r["user_id"] != uid]
+            save_db(db)
+            remove_avatar(avatar)
+            name, email = target.get("name"), target.get("email")
+        log("Accesso eliminato da %s: %s <%s> (%d richieste)" % (coord.get("name"), name, email, len(requests)))
+        self.send_json({"ok": True, "removed_requests": len(requests)})
+
+    def api_push_key(self):
+        db = load_db()
+        self.require_user(db)
+        vapid = load_vapid()
+        self.send_json({"public_key": vapid["public"], "enabled": True})
+
+    def api_push_subscribe(self):
+        data = self.read_json()
+        endpoint = clean_text(data.get("endpoint"), 800)
+        keys = data.get("keys") if isinstance(data.get("keys"), dict) else {}
+        if not endpoint.startswith("https://"):
+            raise ApiError(400, "Sottoscrizione push non valida")
+        try:
+            p256dh, auth = webpush.subscription_keys(keys.get("p256dh"), keys.get("auth"))
+        except (ValueError, TypeError, KeyError):
+            raise ApiError(400, "Chiavi push non valide")
+        with DB_LOCK:
+            db = load_db()
+            user = self.require_user(db)
+            devices = [s for s in (user.get("push") or []) if s.get("endpoint") != endpoint]
+            devices.append({"endpoint": endpoint, "p256dh": p256dh, "auth": auth,
+                            "created_at": now_iso(),
+                            "device": clean_text(data.get("device"), 120)})
+            user["push"] = devices[-PUSH_MAX_DEVICES:]
+            save_db(db)
+            count = len(user["push"])
+        log("Notifiche push attive per %s (%d dispositivi)" % (user.get("name"), count))
+        self.send_json({"ok": True, "devices": count})
+
+    def api_push_unsubscribe(self):
+        data = self.read_json()
+        endpoint = clean_text(data.get("endpoint"), 800)
+        with DB_LOCK:
+            db = load_db()
+            user = self.require_user(db)
+            user["push"] = [s for s in (user.get("push") or [])
+                            if s.get("endpoint") != endpoint]
+            save_db(db)
+            count = len(user["push"])
+        self.send_json({"ok": True, "devices": count})
+
     # ----------------------------- decision page -----------------------------
 
     def handle_decide(self, method, rest, query):
@@ -1773,6 +1941,91 @@ class Handler(BaseHTTPRequestHandler):
 
 
 LOGIN_ATTEMPTS = {}
+
+
+# --------------------------------------------------------------------------
+# Notifiche push (Web Push / VAPID)
+# --------------------------------------------------------------------------
+
+_VAPID_CACHE = {}
+PUSH_MAX_DEVICES = 10
+
+
+def push_subject():
+    if VAPID_SUBJECT:
+        return VAPID_SUBJECT if VAPID_SUBJECT.startswith(("mailto:", "https://")) else "mailto:" + VAPID_SUBJECT
+    address = MAIL_FROM or MAIL_REPLY_TO or "ferie@localhost"
+    return address if address.startswith(("mailto:", "https://")) else "mailto:" + address
+
+
+def load_vapid(force=False):
+    """Chiavi VAPID persistenti in data/vapid.json (generate al primo uso)."""
+    with DB_LOCK:
+        if not force and _VAPID_CACHE.get("value"):
+            return _VAPID_CACHE["value"]
+        data = None
+        if VAPID_PATH.exists():
+            try:
+                data = json.loads(VAPID_PATH.read_text(encoding="utf-8"))
+                vapid = webpush.load_vapid(data)
+            except (OSError, ValueError, KeyError, TypeError):
+                data = None
+        if not data:
+            vapid = webpush.new_vapid(push_subject())
+            _atomic_write(VAPID_PATH, json.dumps(vapid))
+            try:
+                os.chmod(VAPID_PATH, 0o600)
+            except OSError:
+                pass
+        _VAPID_CACHE["value"] = vapid
+        return vapid
+
+
+def push_subscriptions(user):
+    return [s for s in (user or {}).get("push", []) if s.get("endpoint")]
+
+
+def push_payload(title, body, url="/", tag="ferie"):
+    return {"title": title, "body": body, "url": url or "/", "tag": tag}
+
+
+def notify_push(user_id, payload):
+    """Invia la notifica in un thread: la richiesta HTTP non resta in attesa."""
+    if not user_id:
+        return
+    thread = threading.Thread(target=_push_worker, args=(user_id, payload), daemon=True)
+    thread.start()
+
+
+def _push_worker(user_id, payload):
+    try:
+        vapid = load_vapid()
+        db = load_db()
+        devices = push_subscriptions(find_user(db, uid=user_id))
+        if not devices:
+            return
+        stale = []
+        for device in list(devices):
+            try:
+                webpush.send(device, payload, vapid, ttl=86400)
+            except webpush.PushError as exc:
+                if exc.gone:
+                    stale.append(device.get("endpoint"))
+                log("Push non recapitata (%s): %s" % (device.get("endpoint", "?")[:40], exc), error=True)
+            except Exception as exc:  # pragma: no cover - difensivo
+                log("Push non inviata: %r" % exc, error=True)
+        if stale:
+            with DB_LOCK:
+                db = load_db()
+                user = find_user(db, uid=user_id)
+                if user:
+                    user["push"] = [s for s in (user.get("push") or [])
+                                    if s.get("endpoint") not in stale]
+                    save_db(db)
+            log("Rimosse %d sottoscrizioni push scadute" % len(stale))
+    except Exception as exc:  # pragma: no cover - difensivo
+        log("Errore nelle notifiche push: %r" % exc, error=True)
+
 
 
 # --------------------------------------------------------------------------

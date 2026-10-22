@@ -12,7 +12,7 @@
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" href="/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
-<link rel="stylesheet" href="/styles.css?v=20261021u">
+<link rel="stylesheet" href="/styles.css?v=20261022a">
 </head>
 <body>
 
@@ -126,7 +126,9 @@
       <svg class="menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M9.6 9.2a2.5 2.5 0 1 1 3.6 2.3c-.7.4-1.2 1-1.2 1.8v.3"></path><path d="M12 17h.01"></path></svg>
       <span>Rivedi il tutorial</span>
     </button>
+    <button class="menu-item" id="btn-profile" role="menuitem" type="button" hidden>I miei dati</button>
     <button class="menu-item" id="btn-appearance" role="menuitem" type="button">Colore e foto</button>
+    <button class="menu-item" id="btn-push" role="menuitem" type="button"><span id="btn-push-label">Notifiche sul telefono</span></button>
     <button class="menu-item" id="btn-change-pin" role="menuitem" type="button">Cambia PIN</button>
     <button class="menu-item" id="btn-install" role="menuitem" type="button" hidden>Installa sul dispositivo</button>
     <button class="menu-item menu-item--danger" id="btn-logout" role="menuitem" type="button">Esci</button>
@@ -224,15 +226,15 @@
 
               <fieldset class="segmented segmented--types" id="type-selector">
                 <legend>Tipo</legend>
-                <label class="segment">
+                <label class="segment" data-type="ferie">
                   <input type="radio" name="type" value="ferie" checked>
                   <span>Ferie</span>
                 </label>
-                <label class="segment">
+                <label class="segment" data-type="permesso">
                   <input type="radio" name="type" value="permesso">
                   <span>Permesso</span>
                 </label>
-                <label class="segment">
+                <label class="segment" data-type="disponibilita">
                   <input type="radio" name="type" value="disponibilita">
                   <span>Disponibilità</span>
                 </label>
@@ -432,6 +434,6 @@
 
 <div class="toasts" id="toasts" aria-live="polite" aria-atomic="false"></div>
 
-<script src="/app.js?v=20261021v"></script>
+<script src="/app.js?v=20261022a"></script>
 </body>
 </html>
