@@ -46,7 +46,7 @@ Nel database locale sono presenti alcune richieste di esempio (ferie, permesso e
 
 [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/andrex-99/ferie-synlab)
 
-Il pulsante crea su [Render](https://render.com) un servizio web gratuito partendo dal [render.yaml](render.yaml) e dal [Dockerfile](Dockerfile) di questo repository: serve un account Render (gratuito, **senza carta**) e l'autorizzazione a leggere il repository GitHub. Da lì il deploy parte da solo e si aggiorna a ogni push su `main`.
+Il pulsante crea su [Render](https://render.com) un servizio web gratuito partendo dal [render.yaml](render.yaml) e dal [Dockerfile](Dockerfile) di questo repository: serve un account Render (gratuito, **senza carta**) e l'autorizzazione a leggere il repository GitHub. Da lì il deploy parte da solo; per aggiornarlo dopo un push usa **Manual Deploy → Deploy latest commit** nel pannello Render (oppure collega il repository all'account Render per avere il redeploy automatico a ogni push).
 
 Cosa aspettarsi dal piano gratuito:
 
