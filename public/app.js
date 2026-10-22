@@ -189,10 +189,10 @@
   }
 
   function requestSubmitCopy() {
-    if (state.form.type === "disponibilita" && state.form.availability !== "disponibile") {
+    if (state.form.type === "disponibilita") {
       return {
         label: "Comunica al coordinatore",
-        hint: "Il coordinatore riceve una notifica via email della modifica.",
+        hint: "Il coordinatore riceve una notifica via email e può confermarla o rifiutarla.",
       };
     }
     return {
@@ -542,7 +542,7 @@
         view: "calendar",
         target: ".cal-filters",
         title: "Scegli i giorni",
-        body: "Tocca un giorno per selezionarlo. Usa Periodo per toccare il primo e l'ultimo giorno e coprire una settimana intera in due tocchi.",
+        body:        "Tocca un giorno per selezionarlo. Usa Periodo per toccare il primo e l'ultimo giorno e coprire più giorni in due tocchi.",
         hint: "Su telefono, la barra in basso ti porta subito al modulo della richiesta.",
       },
       {
@@ -1206,7 +1206,7 @@
       $("#request-note").value = "";
       $("#note-count").textContent = "0";
       const notified = (data.notified || []).length;
-      const availabilityNotice = state.form.type === "disponibilita" && state.form.availability !== "disponibile";
+      const availabilityNotice = state.form.type === "disponibilita";
       if (data.warning) toast(data.warning, "warn");
       else toast(notified
         ? (availabilityNotice ? "Comunicazione inviata al coordinatore." : "Richiesta inviata al coordinatore.")
@@ -1278,7 +1278,7 @@
       $("#tab-coord-count").textContent = state.pending.length;
       $("#coord-pending-pill").textContent = state.pending.length;
       $("#coord-pending-text").textContent = state.pending.length
-        ? `${state.pending.length} richiesta${state.pending.length > 1 ? "e" : ""} da approvare o rifiutare.`
+        ? `${state.pending.length} richiesta${state.pending.length > 1 ? "e" : ""} in attesa di una decisione.`
         : "Nessuna richiesta in attesa.";
       await loadTeam();
       loadOutbox();
@@ -1306,7 +1306,7 @@
     const count = state.team.length;
     $("#team-hint").textContent = count
       ? `${count} ${count === 1 ? "persona con accesso" : "persone con accesso"} · solo il coordinatore può crearne di nuove.`
-      : "Crea gli accessi per i colleghi della Radiologia.";
+      : "Crea gli accessi per i colleghi del team.";
     list.innerHTML = state.team.map((user) => `
       <li>
         <button class="team-row" type="button" data-edit-user="${esc(user.id)}" title="Cambia colore e foto di ${esc(user.name)}">
@@ -1442,7 +1442,7 @@
     const draft = { avatar: "", color: suggestColor() };
     openModal(`
       <h3>Aggiungi persona</h3>
-      <p class="modal-sub">Crea l'accesso per un collega della Radiologia. Consegna tu il PIN: non viene inviato per email.</p>
+      <p class="modal-sub">Crea l'accesso per una persona del team. Consegna tu il PIN: non viene inviato per email.</p>
       <form class="form" id="user-form" novalidate>
         <label class="field"><span>Nome e cognome</span>
           <input id="new-user-name" name="name" type="text" autocomplete="name" maxlength="80" placeholder="Es. Anna Verdi" required></label>
@@ -1844,7 +1844,7 @@
             { method: "POST", body: {} });
           state.team = state.team.filter((item) => item.id !== user.id);
           closeModal();
-          toast(`${user.name} eliminato${data.removed_requests ? ` con ${data.removed_requests} richieste` : ""}.`, "success");
+          toast(`Accesso di ${user.name} eliminato${data.removed_requests ? ` con ${data.removed_requests} richieste` : ""}.`, "success");
           await Promise.all([loadCoord(), loadCalendar(), loadRequests(), loadNotifications()]);
         } catch (error) {
           toast(error.message, "error");

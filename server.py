@@ -996,7 +996,7 @@ def test_email_html(to):
     body += ('<div style="background:#f5f9fc;border-radius:14px;padding:16px 18px;margin:0 0 18px;font-size:14px;">'
              '<strong>Destinatario:</strong> %s<br><strong>Server:</strong> %s'
              '</div>' % (html.escape(to), html.escape("Resend" if RESEND_API_KEY else "SMTP")))
-    body += '<p style="margin:0;font-size:14px;color:#5a655e;">Da ora coordinatori e dipendenti riceveranno '
+    body += '<p style="margin:0;font-size:14px;color:#5a655e;">Da ora il team riceve '
     body += 'notifiche ed esiti delle richieste.</p>'
     page = email_shell("Email di prova", "Configurazione", body,
                        "Email di prova richiesta dal coordinatore.", accent="#005f96")
@@ -1520,7 +1520,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json(payload, 201)
 
     def api_cancel(self, rid):
-        """Annulla una richiesta: il richiedente anche se approvata, il coordinatore sempre."""
+        """Annulla una richiesta: il richiedente può farlo anche dopo l'approvazione, il coordinatore sempre."""
         with DB_LOCK:
             db = load_db()
             user = self.require_user(db)

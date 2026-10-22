@@ -1,17 +1,17 @@
 # Ferie & Disponibilità · Synlab Manifattura Firenze
 
-> **Progetto dimostrativo, non ufficiale.** Questa è una demo tecnica di un flusso di richiesta ferie e disponibilità: non è un prodotto SYNLAB e non è affiliata all'azienda. Non contiene dati reali di persone: gli account sono fittizi, le richieste di esempio sono inventate e le email sono simulate. Logo e nome SYNLAB identificano solo la sede a scopo illustrativo.
+> **Progetto dimostrativo, non ufficiale.** Questa è una demo tecnica di un flusso di richiesta ferie e disponibilità: non è un prodotto SYNLAB e non è affiliata all'azienda. Non contiene dati reali di persone: gli account sono fittizi, le richieste sono inventate e le email sono simulate. Logo e nome SYNLAB identificano solo la sede a scopo illustrativo.
 
-App web per gestire ferie e disponibilità della **Radiologia di Synlab Manifattura Firenze**. Funziona da browser su **PC, iPhone/iPad, Android e macOS** (stessa interfaccia responsive, installabile sulla schermata Home).
+App web per gestire ferie e disponibilità di **Synlab Manifattura Firenze**. Funziona da browser su **PC, iPhone/iPad, Android e macOS** (stessa interfaccia responsive, installabile sulla schermata Home).
 
 Il coordinatore può creare gli accessi del team direttamente dall'app, senza usare il terminale.
 
 Flusso completo:
 
 1. Il dipendente o il libero professionista accede e seleziona i giorni sul calendario.
-2. Sceglie **Ferie**, **Permesso** (giornata intera, mattina, pomeriggio o un orario personalizzato) oppure **Disponibilità** (non disponibile / disponibile) e aggiunge una nota. I tipi dipendono dal ruolo: i dipendenti chiedono ferie e permessi, i liberi professionisti comunicano solo la disponibilità.
-3. Il coordinatore riceve un'**email** con il riepilogo e un link per **approvare o rifiutare**.
-4. Alla decisione parte un'**email di esito** al richiedente (con file `.ics` se approvata) e, se l'ha attivata, una **notifica push** sul telefono.
+2. Sceglie il tipo adatto al suo ruolo — **Ferie** o **Permesso** (giornata intera, mattina, pomeriggio o un orario personalizzato) per i dipendenti, **Disponibilità** (non disponibile / disponibile) per i liberi professionisti — e aggiunge una nota.
+3. Il coordinatore riceve un'**email** con il riepilogo e un link per **approvare o rifiutare** (per la disponibilità: **confermare o rifiutare**).
+4. Alla decisione parte un'**email di esito** al richiedente (con il file `.ics` quando ferie o permessi vengono approvati) e, se l'ha attivata, una **notifica push** sul telefono.
 5. I giorni approvati compaiono nel **calendario condiviso** visibile a tutti, e restano disponibili come calendario `.ics` iscrivibile su iPhone/Android/Google Calendar.
 6. Il coordinatore ha una coda con contatori, statistiche del mese e il registro di tutte le email inviate; può **rivalutare** una decisione già presa, modificare i propri dati e **eliminare** gli accessi.
 
@@ -42,13 +42,13 @@ Finché non configuri un servizio email, la schermata di accesso mostra i quattr
 
 > Cambia i PIN dimostrativi prima dell'uso reale: menu utente → **Cambia PIN**, oppure `python3 server.py setpin --email ... --pin ...`.
 
-Nel database locale sono presenti alcune richieste di esempio (ferie, permesso e disponibilità) per esplorare subito calendario, coda del coordinatore e registro email. Per ripartire da zero cancella la cartella `data/`: al riavvio vengono ricreati solo i quattro account dimostrativi.
+Il calendario parte vuoto: le richieste compaiono man mano che le invii. Per ripartire da zero cancella la cartella `data/`: al riavvio vengono ricreati solo i quattro account dimostrativi.
 
 ## Demo online con un clic
 
 [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/andrex-99/ferie-synlab)
 
-Il pulsante crea su [Render](https://render.com) un servizio web gratuito partendo dal [render.yaml](render.yaml) e dal [Dockerfile](Dockerfile) di questo repository: serve un account Render (gratuito, **senza carta**) e l'autorizzazione a leggere il repository GitHub. Da lì il deploy parte da solo; per aggiornarlo dopo un push usa **Manual Deploy → Deploy latest commit** nel pannello Render (oppure collega il repository all'account Render per avere il redeploy automatico a ogni push).
+Il pulsante crea su [Render](https://render.com) un servizio web gratuito partendo dal [render.yaml](render.yaml) e dal [Dockerfile](Dockerfile) di questo repository: serve un account Render (gratuito, **senza carta**) e l'autorizzazione a leggere il repository GitHub. Da lì il deploy parte da solo; per aggiornarlo dopo un push usa **Manual Deploy → Deploy latest commit** nel pannello Render (oppure collega il repository all'account Render per avere la pubblicazione automatica a ogni push).
 
 Cosa aspettarsi dal piano gratuito:
 
@@ -104,11 +104,11 @@ Note utili:
 
 ## Notifiche sul telefono
 
-Oltre all'email, ogni persona può ricevere una notifica push quando il coordinatore approva o rifiuta una richiesta: menu utente → **Attiva notifiche sul telefono** e conferma il permesso del browser. La notifica si tocca e apre l'app direttamente sulle richieste.
+Oltre all'email, ogni persona può ricevere una notifica push quando il coordinatore approva, conferma o rifiuta una richiesta: menu utente → **Attiva notifiche sul telefono** e conferma il permesso del browser. La notifica si tocca e apre l'app direttamente sulle richieste.
 
 - Serve una connessione **HTTPS** (o `localhost`): su un indirizzo `http://` di rete locale i browser non permettono le notifiche.
 - Su **iPhone/iPad** funzionano da iOS 16.4 e solo con l'app aggiunta alla schermata Home.
-- Le chiavi VAPID sono generate al primo uso in `data/vapid.json` (non versionare questo file). Se il server riparte da un disco vuoto, le chiavi cambiano e i dispositivi vanno riattivati.
+- Le chiavi VAPID sono generate al primo uso in `data/vapid.json` (non va aggiunto al repository). Se il server riparte da un disco vuoto, le chiavi cambiano e i dispositivi vanno riattivati.
 - Se le notifiche non arrivano resta comunque l'email: le due cose sono indipendenti.
 
 ## Configurazione
@@ -143,8 +143,8 @@ Sono supportati sia **Resend** sia un normale **SMTP**. Senza nessuno dei due re
 
 ### Cosa contiene ogni email
 
-- **Richiesta al coordinatore**: riepilogo in tabella (richiedente, ruolo, tipo, fascia, periodo, giorni, nota), pulsanti **Approva** e **Rifiuta** che aprono la pagina di conferma (nessuna decisione viene presa da un semplice clic sul link), link all'app e `Reply-To` impostato sull'email del richiedente, così il coordinatore può rispondere direttamente.
-- **Esito al richiedente**: esito evidenziato, dettagli, eventuale nota del coordinatore e, se approvata, allegato `.ics` pronto per Apple/Google Calendar.
+- **Richiesta al coordinatore**: riepilogo in tabella (richiedente, ruolo, tipo, fascia, periodo, giorni, nota), pulsanti **Approva** (o **Conferma** per la disponibilità) e **Rifiuta** che aprono la pagina di conferma (nessuna decisione viene presa da un semplice clic sul link), link all'app e `Reply-To` impostato sull'email del richiedente, così il coordinatore può rispondere direttamente.
+- **Esito al richiedente**: esito evidenziato, dettagli, eventuale nota del coordinatore e, per ferie o permessi approvati, allegato `.ics` pronto per Apple/Google Calendar.
 - **Promemoria**: una sola email per richiesta ancora in attesa dopo `REMINDER_HOURS` ore.
 - **Email di prova**: dal registro email, per verificare subito che il provider funzioni.
 
@@ -170,7 +170,7 @@ MAIL_FROM=ferie@example.com
 
 > Per Gmail serve una "password per le app" e l'account deve avere la verifica in due passaggi attiva.
 
-### Deliverability
+### Consegna e spam
 
 Per evitare che le email finiscano in spam, usa un dominio tuo e configura **SPF**, **DKIM** e **DMARC** presso il provider (Resend li configura guidandoti nella verifica del dominio; con SMTP usa il dominio del provider o configura i record DNS). Evita `MAIL_FROM` su domini gratuiti quando possibile.
 
@@ -260,7 +260,7 @@ La scelta resta memorizzata nel browser del dispositivo e non modifica quella de
 python3 -m unittest discover -s tests -v
 ```
 
-Le **30 verifiche** avviano un server isolato con una cartella dati temporanea e coprono accesso e permessi, creazione richiesta, permessi con fascia oraria, **orario personalizzato** (normalizzazione, validazione, calendario ed email), approvazione dal link email anche senza login, rifiuto, calendario condiviso, notifiche, statistiche del coordinatore, reinvio dal registro email, file `.ics`, creazione utenti riservata al coordinatore, login del nuovo utente, colori e foto profilo (permessi, validazione, rimozione, accesso alle immagini), il riuso corretto delle connessioni HTTP (keep-alive), i **tipi di richiesta per ruolo**, il **ritiro di una richiesta approvata**, la **rivalutazione e riapertura** delle decisioni, la **modifica dei propri dati**, l'**eliminazione di un accesso** con le sue richieste, le **notifiche push** (chiavi VAPID, iscrizione, disiscrizione, decisione con servizio push irraggiungibile), l'**URL pubblico HTTPS** dietro un reverse proxy, gli **account demo visibili anche da un indirizzo pubblico** e il **linguaggio coerente per la disponibilità** (pagina di conferma, email senza invito di calendario) con i **periodi non consecutivi** resi come giorni separati.
+Le **30 verifiche** avviano un server isolato con una cartella dati temporanea e coprono accesso e permessi, creazione richiesta, permessi con fascia oraria, **orario personalizzato** (normalizzazione, validazione, calendario ed email), approvazione dal link email anche senza login, rifiuto, calendario condiviso, notifiche, statistiche del coordinatore, reinvio dal registro email, file `.ics`, creazione utenti riservata al coordinatore, login del nuovo utente, colori e foto profilo (permessi, validazione, rimozione, accesso alle immagini), il riuso corretto delle connessioni HTTP (keep-alive), i **tipi di richiesta per ruolo**, il **ritiro di una richiesta approvata**, la **rivalutazione e riapertura** delle decisioni, la **modifica dei propri dati**, l'**eliminazione di un accesso** con le sue richieste, le **notifiche push** (chiavi VAPID, iscrizione, cancellazione dell'iscrizione, decisione con servizio push irraggiungibile), l'**URL pubblico HTTPS** dietro un reverse proxy, gli **account demo visibili anche da un indirizzo pubblico** e il **linguaggio coerente per la disponibilità** (pagina di conferma, email senza invito di calendario) con i **periodi non consecutivi** resi come giorni separati.
 I test della crittografia (`tests/test_webpush.py`) verificano la cifratura `aes128gcm` e la firma ES256 contro i vettori ufficiali di RFC 8291 e RFC 7515.
 
 ---
@@ -348,7 +348,7 @@ Il logo in `public/assets/synlab-logo-4c.png` è stato scaricato da [Wikimedia C
 ## Limiti noti
 
 - Pensata per un singolo team/organizzazione (non multi-azienda).
-- Le notifiche push richiedono **HTTPS**; su iPhone funzionano da iOS 16.4 e solo con l'app aggiunta alla schermata Home. Sui server con disco temporaneo (come il piano gratuito di Render) le chiavi VAPID cambiano a ogni riavvio, quindi i dispositivi vanno riiscritti.
+- Le notifiche push richiedono **HTTPS**; su iPhone funzionano da iOS 16.4 e solo con l'app aggiunta alla schermata Home. Sui server con disco temporaneo (come il piano gratuito di Render) le chiavi VAPID cambiano a ogni riavvio, quindi i dispositivi vanno riattivati.
 - Eliminare un accesso cancella anche le sue richieste (storico compreso): l'operazione non si può annullare.
-- Nessuna integrazione con sistemi di timbratura o payroll.
+- Nessuna integrazione con sistemi di timbratura o paghe.
 - Il registro email conserva gli ultimi 100 messaggi (HTML incluso) in `data/outbox/`: non contiene dati sensibili oltre a nomi, date e note già presenti nel database.
