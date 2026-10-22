@@ -23,6 +23,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+import server  # noqa: E402
 import webpush  # noqa: E402
 
 PIN = {"giulia@studio.it": "1111", "luca@studio.it": "2222",
@@ -352,7 +353,67 @@ class FeatureTest(unittest.TestCase):
         self.assertEqual(status, 200, data)
         self.assertEqual(data["devices"], 0)
 
-    def test_07_url_pubblico_https_dietro_un_proxy(self):
+    def test_07_account_demo_visibili_anche_da_un_indirizzo_pubblico(self):
+        request = urllib.request.Request(
+            self.base + "/api/config", headers={"Host": "ferie-synlab.onrender.com"})
+        with urllib.request.urlopen(request) as response:
+            config = json.loads(response.read().decode("utf-8"))
+        emails = [item["email"] for item in config["demo_accounts"]]
+        self.assertEqual(len(emails), 4, config["demo_accounts"])
+        self.assertIn("coordinatore@studio.it", emails)
+        self.assertTrue(all(item["pin"] for item in config["demo_accounts"]))
+
+    def test_08_disponibilita_linguaggio_e_invito_calendario(self):
+        sara = self.login("sara@studio.it")
+        coordinator = self.login("coordinatore@studio.it")
+        status, data = self.create(sara, {"type": "disponibilita", "dates": [future(150), future(152)],
+                                          "availability": "non_disponibile", "note": "visita"})
+        self.assertEqual(status, 201, data)
+        request_id = data["request"]["id"]
+
+        # La pagina aperta dal link email parla di conferma, non di approvazione
+        with urllib.request.urlopen(data["decision_link"]) as response:
+            page = response.read().decode("utf-8")
+        self.assertIn("Conferma", page)
+        self.assertNotIn(">Approva<", page)
+        self.assertIn("disponibilità", page.lower())
+
+        status, outbox = self.json_call(coordinator, "/api/outbox")
+        self.assertEqual(status, 200, outbox)
+        notice = next(message for message in outbox["messages"]
+                      if message["to"] == "coordinatore@studio.it")
+        self.assertTrue(notice["subject"].startswith("Disponibilità non disponibile"), notice["subject"])
+        self.assertFalse(notice["subject"].startswith("Da approvare"), notice["subject"])
+        status, html = self.call(coordinator, "/api/outbox/%s" % notice["id"])
+        self.assertIn("ha comunicato la sua disponibilità", html)
+
+        status, data = self.json_call(coordinator, "/api/requests/%s/decision" % request_id,
+                                      "POST", {"decision": "approve"})
+        self.assertEqual(status, 200, data)
+        status, outbox = self.json_call(coordinator, "/api/outbox")
+        outcome = outbox["messages"][0]
+        self.assertEqual(outcome["to"], "sara@studio.it")
+        self.assertTrue(outcome["subject"].startswith("✓ Disponibilità confermata"), outcome["subject"])
+        self.assertEqual(outcome["attachments"], 0)
+
+    def test_09_periodi_non_contigui(self):
+        days = [server.parse_day(day) for day in ("2026-11-03", "2026-11-04", "2026-11-10")]
+        label = server.fmt_dates(days)
+        self.assertIn("3\u20134", label, label)
+        self.assertIn("10", label, label)
+        self.assertIn(" e ", label, label)
+        self.assertNotIn("3\u201310", label)
+
+        ics = server.request_ics({"id": "r_prova", "type": "ferie", "note": "",
+                                 "dates": ["2026-11-03", "2026-11-04", "2026-11-10"]},
+                                {"name": "Giulia Rossi"})
+        self.assertEqual(ics.count("BEGIN:VEVENT"), 2)
+        self.assertIn("DTSTART;VALUE=DATE:20261103", ics)
+        self.assertIn("DTEND;VALUE=DATE:20261105", ics)
+        self.assertIn("DTSTART;VALUE=DATE:20261110", ics)
+        self.assertIn("DTEND;VALUE=DATE:20261111", ics)
+
+    def test_10_url_pubblico_https_dietro_un_proxy(self):
         request = urllib.request.Request(
             self.base + "/api/config",
             headers={"X-Forwarded-Proto": "https", "Host": "ferie-synlab.onrender.com"})

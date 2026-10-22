@@ -38,6 +38,8 @@ Apri <http://localhost:8080>. Al primo avvio vengono creati quattro account dimo
 
 Senza credenziali email l'app funziona in **modalità simulata**: le email vengono salvate in `data/outbox/` e sono consultabili dal coordinatore nella sezione *Coordinamento → Registro email*. Questo permette di provare l'intero flusso (decisione inclusa) senza configurare nulla.
 
+Finché non configuri un servizio email, la schermata di accesso mostra i quattro account dimostrativi come pulsanti che compilano email e PIN: è quello che succede anche sulla demo pubblica. Le persone create dal coordinatore non compaiono mai in quell'elenco.
+
 > Cambia i PIN dimostrativi prima dell'uso reale: menu utente → **Cambia PIN**, oppure `python3 server.py setpin --email ... --pin ...`.
 
 Nel database locale sono presenti alcune richieste di esempio (ferie, permesso e disponibilità) per esplorare subito calendario, coda del coordinatore e registro email. Per ripartire da zero cancella la cartella `data/`: al riavvio vengono ricreati solo i quattro account dimostrativi.
@@ -189,7 +191,7 @@ Il flusso consigliato è dall'interfaccia:
 5. Dopo la creazione, usa **Copia credenziali** e consegnale alla persona. Il PIN non viene inviato per email e non è più visibile dopo aver chiuso la finestra.
 6. Al primo accesso la persona trova automaticamente il tutorial; può cambiare PIN, colore e foto dal menu in alto a destra.
 
-Solo i coordinatori possono elencare e creare utenti. Tocca una persona nell'elenco per cambiarne colore e foto; ognuno può comunque modificare il proprio aspetto dal menu. La creazione non richiede il riavvio del server e il nuovo nome compare subito nel calendario e nei filtri del team. La creazione dall'app disattiva i collegamenti agli account dimostrativi nella schermata di login; gli utenti demo già presenti nel database restano visibili finché non vengono rimossi con il comando CLI qui sotto.
+Solo i coordinatori possono elencare e creare utenti. Tocca una persona nell'elenco per cambiarne colore e foto; ognuno può comunque modificare nome, email e aspetto dal menu **I miei dati**. La creazione non richiede il riavvio del server e il nuovo nome compare subito nel calendario e nei filtri del team. L'elenco dei quattro account dimostrativi resta nella schermata di accesso finché quelle persone non vengono eliminate dal pannello o con il comando CLI qui sotto.
 
 ![Persone del team](screenshots/team-synlab.png)
 
@@ -258,7 +260,7 @@ La scelta resta memorizzata nel browser del dispositivo e non modifica quella de
 python3 -m unittest discover -s tests -v
 ```
 
-Le **27 verifiche** avviano un server isolato con una cartella dati temporanea e coprono accesso e permessi, creazione richiesta, permessi con fascia oraria, **orario personalizzato** (normalizzazione, validazione, calendario ed email), approvazione dal link email anche senza login, rifiuto, calendario condiviso, notifiche, statistiche del coordinatore, reinvio dal registro email, file `.ics`, creazione utenti riservata al coordinatore, login del nuovo utente, colori e foto profilo (permessi, validazione, rimozione, accesso alle immagini), il riuso corretto delle connessioni HTTP (keep-alive), i **tipi di richiesta per ruolo**, il **ritiro di una richiesta approvata**, la **rivalutazione e riapertura** delle decisioni, la **modifica dei propri dati**, l'**eliminazione di un accesso** con le sue richieste, le **notifiche push** (chiavi VAPID, iscrizione, disiscrizione, decisione con servizio push irraggiungibile) e l'**URL pubblico HTTPS** dietro un reverse proxy.
+Le **30 verifiche** avviano un server isolato con una cartella dati temporanea e coprono accesso e permessi, creazione richiesta, permessi con fascia oraria, **orario personalizzato** (normalizzazione, validazione, calendario ed email), approvazione dal link email anche senza login, rifiuto, calendario condiviso, notifiche, statistiche del coordinatore, reinvio dal registro email, file `.ics`, creazione utenti riservata al coordinatore, login del nuovo utente, colori e foto profilo (permessi, validazione, rimozione, accesso alle immagini), il riuso corretto delle connessioni HTTP (keep-alive), i **tipi di richiesta per ruolo**, il **ritiro di una richiesta approvata**, la **rivalutazione e riapertura** delle decisioni, la **modifica dei propri dati**, l'**eliminazione di un accesso** con le sue richieste, le **notifiche push** (chiavi VAPID, iscrizione, disiscrizione, decisione con servizio push irraggiungibile), l'**URL pubblico HTTPS** dietro un reverse proxy, gli **account demo visibili anche da un indirizzo pubblico** e il **linguaggio coerente per la disponibilità** (pagina di conferma, email senza invito di calendario) con i **periodi non consecutivi** resi come giorni separati.
 I test della crittografia (`tests/test_webpush.py`) verificano la cifratura `aes128gcm` e la firma ES256 contro i vettori ufficiali di RFC 8291 e RFC 7515.
 
 ---

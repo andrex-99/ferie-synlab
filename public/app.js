@@ -80,6 +80,22 @@
       ` – ${WEEKDAYS_SHORT[b.getDay()]} ${b.getDate()} ${MONTHS_SHORT[b.getMonth()]} ${b.getFullYear()}`;
   }
 
+  function fmtDays(dates) {
+    const runs = groupRuns(Array.isArray(dates) ? dates : []);
+    if (!runs.length) return "";
+    if (runs.length === 1) return fmtPeriod(runs[0].start, runs[0].end);
+    const labels = runs.map((run) => fmtPeriod(run.start, run.end));
+    return labels.slice(0, -1).join(", ") + " e " + labels[labels.length - 1];
+  }
+
+  function fmtDaysShort(dates) {
+    const runs = groupRuns(Array.isArray(dates) ? dates : []);
+    if (!runs.length) return "";
+    if (runs.length === 1) return fmtShortRange(runs[0].start, runs[0].end);
+    const labels = runs.map((run) => fmtShortRange(run.start, run.end));
+    return labels.slice(0, -1).join(", ") + " e " + labels[labels.length - 1];
+  }
+
   function fmtShortRange(a, b) {
     const x = parseDay(a);
     const y = parseDay(b || a);
@@ -439,7 +455,7 @@
     const isCoord = user.role === "coordinatore";
     $("#tab-coord").hidden = !isCoord;
     $("#coord-quick").hidden = !isCoord;
-    $("#btn-profile").hidden = !isCoord;
+    $("#btn-profile").hidden = false;
     applyRoleTypes(user);
     refreshPushLabel();
     const ics = state.config?.ics_url || "/calendar.ics";
@@ -505,7 +521,11 @@
       {
         icon: "sparkles",
         title: "Ciao " + firstName + ", ti faccio strada",
-        body: "In meno di un minuto vediamo come chiedere ferie o modificare la disponibilità, e come la richiesta arriva al coordinatore.",
+        body: user.role === "professionista"
+          ? "In meno di un minuto vediamo come comunicare la tua disponibilità e come arriva al coordinatore."
+          : user.role === "coordinatore"
+            ? "In meno di un minuto vediamo come arrivano le richieste, come decidi e cosa vede il team."
+            : "In meno di un minuto vediamo come chiedere ferie o permessi e come la richiesta arriva al coordinatore.",
         hint: "Puoi interrompere con Salta e riaprire la guida dal punto interrogativo in alto.",
         center: true,
       },
@@ -539,7 +559,9 @@
         view: "requests",
         target: "#requests-list",
         title: "Controlla l'esito",
-        body: "In Richieste trovi lo stato: in attesa, approvata o rifiutata. Il campanello in alto segnala quando arriva una risposta.",
+        body: user.role === "professionista"
+          ? "In Richieste trovi lo stato della comunicazione: in attesa, confermata o rifiutata. Il campanello in alto segnala quando arriva una risposta."
+          : "In Richieste trovi lo stato: in attesa, approvata o rifiutata. Il campanello in alto segnala quando arriva una risposta.",
       },
     ];
     if (user && user.role === "coordinatore") {
@@ -548,14 +570,14 @@
         view: "coord",
         target: "#coord-stats",
         title: "La coda del coordinatore",
-        body: "Qui vedi quante richieste aspettano una decisione e i giorni approvati nel mese. Approva o rifiuta dalla coda: il dipendente riceve l'email con l'esito.",
+        body: "Qui vedi quante richieste aspettano una decisione e i giorni approvati nel mese. Approva o rifiuta dalla coda: la persona riceve l'email con l'esito.",
       });
       steps.push({
         icon: "users",
         view: "coord",
         target: "#team-card .team-head",
         title: "Crea gli accessi",
-        body: "Qui vedi chi ha un accesso alla Radiologia. Con Aggiungi persona scegli nome, email, ruolo, colore personale e, se vuoi, una foto: ogni persona resta riconoscibile a colpo d'occhio.",
+        body: "Qui vedi chi ha un accesso all'app. Con Aggiungi persona scegli nome, email, ruolo, colore personale e, se vuoi, una foto: ogni persona resta riconoscibile a colpo d'occhio.",
         hint: "Solo il coordinatore può creare nuovi accessi.",
       });
       steps.push({
@@ -928,7 +950,10 @@
     const todayDate = today();
     if (start < todayDate) start = todayDate;
     const limit = addDays(todayDate, 90);
-    if (end > limit) end = limit;
+    if (end > limit) {
+      end = limit;
+      toast("Il periodo è stato fermato a 90 giorni: è il massimo per una richiesta.");
+    }
     state.selected.clear();
     for (let d = new Date(start); d <= end; d = addDays(d, 1)) state.selected.add(iso(d));
     state.rangeAnchor = null;
@@ -1011,9 +1036,11 @@
       : state.form.type === "permesso"
         ? "Permesso" + (state.form.slot && state.form.slot !== "giornata" ? " · " + formSlotLabel() : "")
         : (state.form.availability === "disponibile" ? "Disponibile" : "Non disponibile");
-    const first = runs[0].start;
-    const last = runs[runs.length - 1].end;
-    $("#request-summary-text").textContent = `${typeName} · ${fmtShortRange(first, last)}`;
+    const runLabels = runs.map((run) => fmtShortRange(run.start, run.end));
+    const periodLabel = runLabels.length === 1
+      ? runLabels[0]
+      : runLabels.slice(0, -1).join(", ") + " e " + runLabels[runLabels.length - 1];
+    $("#request-summary-text").textContent = `${typeName} · ${periodLabel}`;
     $("#request-summary-days").textContent = `${state.selected.size} ${state.selected.size === 1 ? "giorno" : "giorni"}`;
     renderConflict();
   }
@@ -1057,7 +1084,7 @@
         ${eventAvatar(ev)}
         <span class="mini-main">
           <span class="mini-name">${esc(ev.user_name)}</span>
-          <span class="mini-when">${esc(typeLabel(ev))} · ${esc(fmtPeriod(ev.start, ev.end))}${ev.days > 1 ? ` · ${ev.days} gg` : ""}</span>
+          <span class="mini-when">${esc(typeLabel(ev))} · ${esc(fmtDays(ev.dates))}${ev.days > 1 ? ` · ${ev.days} gg` : ""}</span>
         </span>
       </li>`).join("");
   }
@@ -1073,7 +1100,7 @@
         ${eventAvatar(ev)}
         <div>
           <div class="day-detail-name">${esc(ev.user_name)}</div>
-          <div class="day-detail-meta">${esc(typeLabel(ev))} · ${esc(fmtPeriod(ev.start, ev.end))}
+          <div class="day-detail-meta">${esc(typeLabel(ev))} · ${esc(fmtDays(ev.dates))}
             ${ev.status === "pending" ? " · in attesa" : ""}</div>
           ${ev.note ? `<div class="day-detail-meta">“${esc(ev.note)}”</div>` : ""}
         </div>
@@ -1111,8 +1138,10 @@
   function renderRequests() {
     const box = $("#requests-list");
     if (!state.requests.length) {
-      box.innerHTML = `<div class="empty-state"><h3>Nessuna richiesta</h3>
-        <p>Quando invii ferie o disponibilità le trovi qui con l'esito.</p></div>`;
+      const intro = state.me && state.me.role === "professionista"
+        ? "Quando comunichi la tua disponibilità la trovi qui con l'esito."
+        : "Quando chiedi ferie o permessi li trovi qui con l'esito.";
+      box.innerHTML = `<div class="empty-state"><h3>Nessuna richiesta</h3><p>${intro}</p></div>`;
       return;
     }
     box.innerHTML = state.requests.map((req) => `
@@ -1121,7 +1150,7 @@
           <div>
             <div class="req-type"><span class="dot" style="background:${esc(personColor(req))}"></span>
               ${esc(typeLabel(req))}</div>
-            <div class="req-period">${esc(fmtPeriod(req.start, req.end))} · ${req.days} ${req.days === 1 ? "giorno" : "giorni"}</div>
+            <div class="req-period">${esc(fmtDays(req.dates))} · ${req.days} ${req.days === 1 ? "giorno" : "giorni"}</div>
           </div>
           ${statusPill(req.status)}
         </div>
@@ -1208,7 +1237,7 @@
     if (!req) return;
     openModal(`
       <h3>Ritirare la richiesta?</h3>
-      <p class="modal-sub">${esc(typeLabel(req))} · ${esc(fmtPeriod(req.start, req.end))}</p>
+      <p class="modal-sub">${esc(typeLabel(req))} · ${esc(fmtDays(req.dates))}</p>
       <p class="field-hint">La richiesta era già approvata: i giorni spariranno dal calendario del team e il coordinatore vedrà che l'hai ritirata.</p>
       <div class="modal-actions">
         <button class="btn btn--ghost btn--sm" type="button" data-close-modal>Lascia com'è</button>
@@ -1651,7 +1680,7 @@
           <div class="req-top">
             <div>
               <div class="req-type">${eventAvatar(req)}${esc(req.user_name)}</div>
-              <div class="req-period">${esc(typeLabel(req))} · ${esc(fmtPeriod(req.start, req.end))} · ${req.days} ${req.days === 1 ? "giorno" : "giorni"}</div>
+              <div class="req-period">${esc(typeLabel(req))} · ${esc(fmtDays(req.dates))} · ${req.days} ${req.days === 1 ? "giorno" : "giorni"}</div>
             </div>
             ${statusPill("pending")}
           </div>
@@ -1675,7 +1704,7 @@
           ${eventAvatar(req)}
           <span class="mini-main">
             <span class="mini-name">${esc(req.user_name)}</span>
-            <span class="mini-when">${esc(fmtShortRange(req.start, req.end))} · ${req.status === "approved" ? "approvata" : "rifiutata"}</span>
+            <span class="mini-when">${esc(fmtDaysShort(req.dates))} · ${req.status === "approved" ? "approvata" : "rifiutata"}</span>
           </span>
           <button class="btn btn--ghost btn--xs" type="button" data-reevaluate="${esc(req.id)}" title="Rivaluta questa decisione">Rivaluta</button>
         </li>`).join("");
@@ -1703,7 +1732,7 @@
     const firstName = String(req.user_name || "").split(" ")[0];
     openModal(`
       <h3>Rivaluta la richiesta</h3>
-      <p class="modal-sub">${esc(req.user_name)} · ${esc(typeLabel(req))} · ${esc(fmtPeriod(req.start, req.end))}</p>
+      <p class="modal-sub">${esc(req.user_name)} · ${esc(typeLabel(req))} · ${esc(fmtDays(req.dates))}</p>
       ${statusPill(req.status)}
       <label class="field"><span>Nota per ${esc(firstName)} <em>(facoltativa)</em></span>
         <textarea id="reeval-note" maxlength="500" rows="3" placeholder="Es. cambio turno concordato"></textarea></label>
@@ -1924,6 +1953,16 @@
     return "ok";
   }
 
+  function iosWithoutInstall() {
+    const ua = navigator.userAgent || "";
+    const ios = /iPad|iPhone|iPod/.test(ua)
+      || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+    if (!ios) return false;
+    const standalone = navigator.standalone === true
+      || (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches);
+    return !standalone;
+  }
+
   function decodePushKey(base64) {
     const padding = "=".repeat((4 - (base64.length % 4)) % 4);
     const raw = atob((base64 + padding).replace(/-/g, "+").replace(/_/g, "/"));
@@ -1965,6 +2004,10 @@
 
   async function enablePush() {
     if (pushSupport() !== "ok" || typeof Notification === "undefined") {
+      pushHelp();
+      return;
+    }
+    if (iosWithoutInstall()) {
       pushHelp();
       return;
     }
