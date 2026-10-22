@@ -1,7 +1,7 @@
 /* Cache di base: l'app resta utilizzabile anche con rete instabile.
    Le richieste API non vengono mai messe in cache. */
-const CACHE = "ferie-shell-v39";
-const SHELL = ["/", "/styles.css?v=20261022c", "/app.js?v=20261022c", "/manifest.webmanifest", "/icon.svg", "/assets/synlab-logo-4c.png"];
+const CACHE = "ferie-shell-v40";
+const SHELL = ["/", "/styles.css?v=20261023a", "/app.js?v=20261023a", "/manifest.webmanifest", "/icon.svg", "/assets/synlab-logo-4c.png"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(

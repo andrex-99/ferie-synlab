@@ -89,6 +89,20 @@ def slot_display(req):
     return SLOT_LABELS.get(slot or "", "")
 
 
+def slot_detail(req):
+    """Fascia da mostrare accanto al periodo, quando non è la giornata intera.
+
+    Vale per i permessi e per la disponibilità: un professionista può essere
+    disponibile solo dalle 8 alle 13, e la fascia oraria deve comparire ovunque
+    (email, calendario, pagina di conferma).
+    """
+    if req.get("type") not in ("permesso", "disponibilita"):
+        return ""
+    if not req.get("slot") or req.get("slot") == "giornata":
+        return ""
+    return slot_display(req)
+
+
 # --------------------------------------------------------------------------
 # Configurazione
 # --------------------------------------------------------------------------
@@ -308,11 +322,10 @@ def allowed_types(user):
     """Tipi di richiesta ammessi per ruolo.
 
     I professionisti comunicano solo la disponibilità, i dipendenti chiedono
-    ferie e permessi. Il coordinatore mantiene tutti i tipi.
+    ferie e permessi. Il coordinatore chiede ferie e permessi come i dipendenti:
+    la disponibilità riguarda solo chi lavora su turni o a chiamata.
     """
     role = (user or {}).get("role")
-    if is_coordinator(user):
-        return list(TYPE_LABELS)
     if role == ROLE_FREELANCE:
         return ["disponibilita"]
     return ["ferie", "permesso"]
@@ -593,8 +606,8 @@ def request_ics(req, user, stamp=None):
     title = TYPE_LABELS.get(req["type"], "Richiesta")
     if req["type"] == "disponibilita":
         title = "Disponibilità: " + AVAIL_LABELS.get(req.get("availability"), "")
-    elif req["type"] == "permesso" and req.get("slot"):
-        title += " · " + slot_display(req)
+    if slot_detail(req):
+        title += " · " + slot_detail(req)
     summary = "%s — %s" % (title, user.get("name", ""))
     description = (req.get("note") or "").replace("\n", "\\n")
     stamp = stamp or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -726,8 +739,8 @@ def details_table(req, requester):
     if role:
         rows.append(("Ruolo", role.capitalize()))
     type_label = TYPE_LABELS.get(req["type"], req["type"])
-    if req["type"] == "permesso" and req.get("slot"):
-        type_label += " · " + slot_display(req)
+    if slot_detail(req):
+        type_label += " · " + slot_detail(req)
     rows.append(("Tipo", type_label))
     if req["type"] == "disponibilita":
         rows.append(("Disponibilità", AVAIL_LABELS.get(req.get("availability"), "")))
@@ -870,18 +883,19 @@ def email_footer(req=None):
 def coordinator_email(requester, req, decide_url, app_url):
     period = fmt_dates([parse_day(d) for d in req["dates"]])
     type_label = TYPE_LABELS.get(req["type"], "Richiesta")
-    if req["type"] == "permesso" and req.get("slot"):
-        type_label = "%s (%s)" % (type_label, slot_display(req).lower())
+    if slot_detail(req):
+        type_label = "%s (%s)" % (type_label, slot_detail(req).lower())
     is_avail = req["type"] == "disponibilita"
     if is_avail:
         availability = AVAIL_LABELS.get(req.get("availability"), "")
         subject = "Disponibilità %s: %s · %s" % (availability.lower(), requester["name"], period)
         intro = ("%s ha comunicato la sua disponibilità: <strong>%s</strong> nei giorni indicati."
                  % (html.escape(requester["name"]), html.escape(availability.lower())))
-        prompt_title = "Conferma o rifiuta"
-        prompt_body = ("Apri la comunicazione per confermarla o rifiutarla. La persona riceverà subito "
-                       "un'email con l'esito.")
-        approve_label = "Conferma"
+        prompt_title = "Prendi visione"
+        prompt_body = ("Apri la comunicazione per confermare di averla letta. La persona riceverà una "
+                       "conferma di lettura, non un'approvazione.")
+        approve_label = "Ho letto"
+        reject_label = "Segnala da rivedere"
     else:
         subject = "Da approvare: %s di %s · %s" % (type_label.lower(), requester["name"], period)
         intro = "È arrivata una nuova richiesta da approvare."
@@ -889,6 +903,7 @@ def coordinator_email(requester, req, decide_url, app_url):
         prompt_body = ("Apri la richiesta per approvarla o rifiutarla. Il richiedente riceverà subito "
                        "un'email con l'esito.")
         approve_label = "Approva"
+        reject_label = "Rifiuta"
     body = ('<p style="margin:0 0 20px;">' + intro + '</p>'
             + details_table(req, requester)
             + note_block(req.get("note")))
@@ -899,7 +914,7 @@ def coordinator_email(requester, req, decide_url, app_url):
     body += '<p style="margin:0 0 10px;font-weight:600;color:#1b2321;">Decidi ora</p>'
     body += ('<p style="margin:0 0 4px;">%s %s</p>'
              % (button(approve_url, approve_label, "#2f7d63"),
-                button(reject_url, "Rifiuta", "#a4483f")))
+                button(reject_url, reject_label, "#a4483f")))
     body += ('<p style="margin:0 0 18px;font-size:12.5px;color:#8a8172;">Si apre la pagina di conferma: '
              'nessuna decisione viene registrata senza un ultimo clic.</p>')
     body += '<p style="margin:18px 0 0;">%s</p>' % ghost_link(app_url, "Apri il coordinamento")
@@ -908,8 +923,8 @@ def coordinator_email(requester, req, decide_url, app_url):
             if is_avail else
             ("Nuova richiesta di %s\n%s\n%s\nGiorni: %d\nNota: %s\n\n" % (requester["name"], type_label, period,
                                                                       len(req["dates"]), req.get("note") or "-")))
-    text += ("%s: %s\nRifiuta: %s\nApri e decidi: %s\nApp: %s\n"
-             % (approve_label, approve_url, reject_url, decide_url, app_url))
+    text += ("%s: %s\n%s: %s\nApri e decidi: %s\nApp: %s\n"
+             % (approve_label, approve_url, reject_label, reject_url, decide_url, app_url))
     page = email_shell("Richiesta da approvare", "Ferie & disponibilità", body,
                        email_footer(req),
                        preheader="%s di %s, %s" % (type_label, requester["name"], period),
@@ -917,20 +932,66 @@ def coordinator_email(requester, req, decide_url, app_url):
     return subject, page, text
 
 
-def outcome_email(requester, req, coordinator_name, decision_note, app_url):
-    approved = req["status"] == "approved"
-    is_avail = req["type"] == "disponibilita"
-    type_label = TYPE_LABELS.get(req["type"], "Richiesta")
-    request_label = type_label + ((" · " + slot_display(req)) if req["type"] == "permesso" else "")
+def availability_outcome_email(requester, req, coordinator_name, decision_note, app_url):
+    """Risposta alla disponibilità: una conferma di lettura, non un'approvazione.
+
+    La disponibilità non è una richiesta da concedere: il coordinatore conferma
+    solo di averla vista (o segnala che va rivista) e la persona ne riceve atto.
+    """
+    read = req["status"] == "approved"
     period = fmt_dates([parse_day(d) for d in req["dates"]])
-    if is_avail:
-        outcome_word = "confermata" if approved else "rifiutata"
-        subject = "%s %s · %s" % ("✓" if approved else "✕",
-                                  "Disponibilità confermata" if approved else "Disponibilità rifiutata", period)
+    availability = AVAIL_LABELS.get(req.get("availability"), "")
+    who = html.escape(coordinator_name or "il coordinatore")
+    if read:
+        subject = "✓ Comunicazione letta · %s" % period
+        headline = "Il coordinatore ha preso visione della tua comunicazione"
+        tint, ink, icon = "#eaf2f8", "#075a8a", "✓"
+        accent = "#005f96"
+        explain = ("Hai comunicato <strong>%s</strong> e il coordinatore l'ha letta. "
+                   "Non serve nessuna azione da parte tua." % html.escape(availability.lower()))
+        preheader = "Comunicazione letta, %s" % period
     else:
-        outcome_word = "approvata" if approved else "rifiutata"
-        subject = "%s %s · %s" % ("✓" if approved else "✕",
-                                  "Richiesta approvata" if approved else "Richiesta rifiutata", period)
+        subject = "✕ Comunicazione da rivedere · %s" % period
+        headline = "Il coordinatore ha letto la tua comunicazione e ti chiede di verificarla"
+        tint, ink, icon = "#fbf2e0", "#8a6a1f", "!"
+        accent = "#b4842a"
+        explain = ("Hai comunicato <strong>%s</strong> e il coordinatore segnala che va rivista."
+                   % html.escape(availability.lower()))
+        preheader = "Comunicazione da rivedere, %s" % period
+    body = ('<div style="background:%s;border-radius:14px;padding:16px 18px;margin:0 0 22px;">'
+            '<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>'
+            '<td width="34" height="34" style="width:34px;height:34px;border-radius:50%%;background:%s;color:#fff;'
+            'font-size:17px;font-weight:700;text-align:center;vertical-align:middle;">%s</td>'
+            '<td style="padding-left:12px;font-size:15px;line-height:1.4;color:%s;font-weight:700;">'
+            '%s<br><span style="font-weight:500;font-size:13px;color:#5a655e;">da %s</span>'
+            '</td></tr></table></div>'
+            % (tint, ink, icon, ink, headline, who))
+    body += details_table(req, requester)
+    body += '<p style="margin:0 0 18px;color:#5a655e;font-size:14px;">%s</p>' % explain
+    if decision_note:
+        body += ('<p style="margin:0 0 6px;font-weight:600;color:#1b2321;">Nota del coordinatore</p>'
+                 + note_block(decision_note))
+    body += '<p style="margin:0 0 6px;">%s</p>' % button(app_url, "Apri il calendario", accent)
+    text = ("Conferma di lettura: il coordinatore ha letto la tua comunicazione di disponibilità "
+            "(%s, %s).\n%s\n%s\n"
+            % (availability.lower(), period,
+               ("Nota: " + decision_note) if decision_note else "", app_url))
+    page = email_shell("Conferma di lettura", "Ferie & disponibilità", body,
+                       email_footer(req), preheader=preheader, accent=accent)
+    return subject, page, text
+
+
+def outcome_email(requester, req, coordinator_name, decision_note, app_url):
+    # La disponibilità non si approva: ha una risposta dedicata, senza esito.
+    if req["type"] == "disponibilita":
+        return availability_outcome_email(requester, req, coordinator_name, decision_note, app_url)
+    approved = req["status"] == "approved"
+    type_label = TYPE_LABELS.get(req["type"], "Richiesta")
+    request_label = type_label + ((" · " + slot_detail(req)) if slot_detail(req) else "")
+    period = fmt_dates([parse_day(d) for d in req["dates"]])
+    outcome_word = "approvata" if approved else "rifiutata"
+    subject = "%s %s · %s" % ("✓" if approved else "✕",
+                              "Richiesta approvata" if approved else "Richiesta rifiutata", period)
     accent = "#2f7d63" if approved else "#a4483f"
     tint = "#e9f4ec" if approved else "#fbeceb"
     ink = "#1f6f57" if approved else "#a4483f"
@@ -942,21 +1003,18 @@ def outcome_email(requester, req, coordinator_name, decision_note, app_url):
             '<td style="padding-left:12px;font-size:15px;line-height:1.4;color:%s;font-weight:700;">'
             'La tua %s è stata %s<br><span style="font-weight:500;font-size:13px;color:#5a655e;">da %s</span>'
             '</td></tr></table></div>'
-            % (tint, ink, icon, ink, "disponibilità" if is_avail else "richiesta", outcome_word,
+            % (tint, ink, icon, ink, "richiesta", outcome_word,
                html.escape(coordinator_name or "il coordinatore")))
     body += details_table(req, requester)
     if decision_note:
         body += ('<p style="margin:0 0 6px;font-weight:600;color:#1b2321;">Nota del coordinatore</p>'
                  + note_block(decision_note))
-    if approved and is_avail:
-        body += ('<p style="margin:0 0 18px;color:#5a655e;font-size:14px;">Il coordinatore vede la tua '
-                 'disponibilità nel calendario del team: nessun giorno di assenza viene registrato.</p>')
-    elif approved:
+    if approved:
         body += ('<p style="margin:0 0 18px;color:#5a655e;font-size:14px;">I giorni sono ora visibili nel '
                  'calendario condiviso. In allegato trovi il file <strong>.ics</strong> per aggiungerli al tuo '
                  'calendario personale.</p>')
     body += '<p style="margin:0 0 6px;">%s</p>' % button(app_url, "Apri il calendario", accent)
-    subject_what = ("la tua disponibilità" if is_avail else "la tua richiesta di " + request_label.lower())
+    subject_what = "la tua richiesta di " + request_label.lower()
     text = ("%s (%s) è stata %s da %s.\n%s\n%s\n"
             % (subject_what.capitalize(), period, outcome_word,
                coordinator_name or "il coordinatore",
@@ -971,8 +1029,8 @@ def outcome_email(requester, req, coordinator_name, decision_note, app_url):
 def reminder_email(requester, req, decide_url, app_url, hours):
     period = fmt_dates([parse_day(d) for d in req["dates"]])
     type_label = TYPE_LABELS.get(req["type"], "Richiesta")
-    if req["type"] == "permesso" and req.get("slot"):
-        type_label = "%s (%s)" % (type_label, slot_display(req).lower())
+    if slot_detail(req):
+        type_label = "%s (%s)" % (type_label, slot_detail(req).lower())
     hours = max(1, int(hours))
     hour_word = "ora" if hours == 1 else "ore"
     subject = "Promemoria: %s di %s in attesa" % (type_label.lower(), requester["name"])
@@ -1450,7 +1508,9 @@ class Handler(BaseHTTPRequestHandler):
         slot = None
         time_from = None
         time_to = None
-        if req_type == "permesso":
+        # Permessi e disponibilità possono coprire solo una parte della giornata:
+        # un professionista può essere disponibile dalle 8 alle 13, non dalle 8 alle 20.
+        if req_type in ("permesso", "disponibilita"):
             slot = data.get("slot") or "giornata"
             if slot not in SLOT_LABELS:
                 raise ApiError(400, "La fascia oraria non è valida")
@@ -1458,7 +1518,7 @@ class Handler(BaseHTTPRequestHandler):
                 time_from = normalize_time(data.get("time_from"))
                 time_to = normalize_time(data.get("time_to"))
                 if not time_from or not time_to:
-                    raise ApiError(400, "Indica l'orario di inizio e di fine del permesso")
+                    raise ApiError(400, "Indica l'orario di inizio e di fine")
                 if time_to <= time_from:
                     raise ApiError(400, "L'orario di fine deve essere successivo a quello di inizio")
         note = clean_text(data.get("note"), 500)
@@ -1597,9 +1657,11 @@ class Handler(BaseHTTPRequestHandler):
         days = [parse_day(day) for day in req.get("dates", []) if parse_day(day)]
         approved = req["status"] == "approved"
         if req.get("type") == "disponibilita":
-            push_title = "Disponibilità confermata" if approved else "Disponibilità rifiutata"
+            push_title = "Comunicazione letta" if approved else "Comunicazione da rivedere"
             push_body = "Disponibilità: %s · %s" % (AVAIL_LABELS.get(req.get("availability"), ""),
                                                      fmt_dates(days))
+            if slot_detail(req):
+                push_body += " · " + slot_detail(req)
         else:
             push_title = "Richiesta approvata" if approved else "Richiesta rifiutata"
             push_body = "%s · %s" % (TYPE_LABELS.get(req.get("type"), "Richiesta"), fmt_dates(days))
@@ -1936,6 +1998,8 @@ class Handler(BaseHTTPRequestHandler):
                 label = "Permesso" + (" · " + slot_display(req) if req.get("slot") else "")
             else:
                 label = "Disponibilità: " + AVAIL_LABELS.get(req.get("availability"), "")
+            if slot_detail(req):
+                label += " · " + slot_detail(req)
             runs = group_day_runs(days)
             for index, (start, end) in enumerate(runs):
                 uid = req["id"] if len(runs) == 1 else "%s-%d" % (req["id"], index + 1)
@@ -2187,17 +2251,19 @@ def decision_page(db, req, coord, token, already=False, action=""):
     is_avail = req["type"] == "disponibilita"
     if is_avail:
         label += " · " + AVAIL_LABELS.get(req.get("availability"), "")
-    elif req["type"] == "permesso" and req.get("slot"):
-        label += " · " + slot_display(req)
+    if slot_detail(req):
+        label += " · " + slot_detail(req)
     escaped_note = html.escape(req.get("note") or "")
-    approve_word = "Conferma" if is_avail else "Approva"
-    outcome_meta = ("Se confermi, la disponibilità compare nel calendario del team." if is_avail
+    approve_word = "Ho letto" if is_avail else "Approva"
+    reject_word = "Segnala da rivedere" if is_avail else "Rifiuta"
+    outcome_meta = ("Confermando la lettura, la disponibilità compare nel calendario del team." if is_avail
                     else "Se approvi, i giorni compariranno nel calendario condiviso dell'app.")
+    outcome_hint = ("riceverà una conferma di lettura" if is_avail else "riceverà subito un'email con l'esito")
     status = req.get("status")
     chips = [
-        '<span class="status wait">In attesa di decisione</span>',
-        '<span class="status ok">%s</span>' % ("Confermata" if is_avail else "Approvata"),
-        '<span class="status no">Rifiutata</span>',
+        '<span class="status wait">%s</span>' % ("In attesa di lettura" if is_avail else "In attesa di decisione"),
+        '<span class="status ok">%s</span>' % ("Letta" if is_avail else "Approvata"),
+        '<span class="status no">%s</span>' % ("Da rivedere" if is_avail else "Rifiutata"),
     ]
     status_map = {"pending": chips[0], "approved": chips[1], "rejected": chips[2], "cancelled": chips[2]}
     head = status_map.get(status, chips[0])
@@ -2208,18 +2274,19 @@ def decision_page(db, req, coord, token, already=False, action=""):
                 '<tr><td>Tipo</td><td>%s</td></tr>'
                 '<tr><td>Periodo</td><td>%s</td></tr>'
                 '<tr><td>Giorni</td><td>%d</td></tr>'
-                '</table>%s<p class="sub">La richiesta è già stata gestita. '
+                '</table>%s<p class="sub">%s '
                 'Puoi consultare il calendario dall\'app.</p>'
                 '<div class="actions"><a href="/" style="display:inline-block;background:#005f96;color:#fff;'
                 'text-decoration:none;font-weight:600;padding:13px 22px;border-radius:999px;">Apri il calendario</a></div>'
                 '</div>'
                 % (head, html.escape(requester.get("name", "")), html.escape(label), html.escape(period),
-                   len(days), ('<p class="note">%s</p>' % result_note) if result_note else ""))
+                   len(days), ('<p class="note">%s</p>' % result_note) if result_note else "",
+                   "La comunicazione è già stata gestita." if is_avail else "La richiesta è già stata gestita."))
     else:
         note_input = ('<label for="note">Nota per %s (facoltativa)</label>'
                       '<textarea id="note" name="note" maxlength="500" placeholder="%s"></textarea>'
                       % (html.escape(requester.get("name", "").split()[0] if requester.get("name") else "il richiedente"),
-                         "Es. confermata" if is_avail else "Es. approvata, buone ferie"))
+                         "Es. letta" if is_avail else "Es. approvata, buone ferie"))
         template = ('<div class="body">%s<table>'
                     '<tr><td>Richiedente</td><td>%s</td></tr>'
                     '<tr><td>Ruolo</td><td>%s</td></tr>'
@@ -2231,10 +2298,13 @@ def decision_page(db, req, coord, token, already=False, action=""):
                     '<input type="hidden" name="t" value="%s">%s'
                     '<div class="actions">'
                     '<button class="approve%s" name="decision" value="approve" type="submit">@APPROVA@</button>'
-                    '<button class="reject%s" name="decision" value="reject" type="submit">Rifiuta</button>'
+                    '<button class="reject%s" name="decision" value="reject" type="submit">@RIFIUTA@</button>'
                     '</div></form>'
-                    '<p class="meta">%s riceverà subito un\'email con l\'esito. @META@</p></div>')
-        template = template.replace("@APPROVA@", approve_word).replace("@META@", outcome_meta)
+                    '<p class="meta">%s @ESITO@. @META@</p></div>')
+        template = (template.replace("@APPROVA@", approve_word)
+                    .replace("@RIFIUTA@", reject_word)
+                    .replace("@ESITO@", outcome_hint)
+                    .replace("@META@", outcome_meta))
         body = (template
                 % (head, html.escape(requester.get("name", "")), html.escape(requester.get("role", "").capitalize()),
                    html.escape(label), html.escape(period), len(days),

@@ -159,14 +159,16 @@
   }
 
   function typeLabel(ev) {
+    const slot = ev.slot && ev.slot !== "giornata" ? " · " + (ev.slot_label || ev.slot) : "";
     if (ev.type === "disponibilita") {
-      return ev.availability === "disponibile" ? "Disponibile" : "Non disponibile";
+      return (ev.availability === "disponibile" ? "Disponibile" : "Non disponibile") + slot;
     }
-    if (ev.type === "permesso") {
-      const slot = ev.slot && ev.slot !== "giornata" ? " · " + (ev.slot_label || ev.slot) : "";
-      return "Permesso" + slot;
-    }
+    if (ev.type === "permesso") return "Permesso" + slot;
     return "Ferie";
+  }
+
+  function isAvailability(req) {
+    return !!req && req.type === "disponibilita";
   }
 
   function personColor(ev) {
@@ -192,7 +194,7 @@
     if (state.form.type === "disponibilita") {
       return {
         label: "Comunica al coordinatore",
-        hint: "Il coordinatore riceve una notifica via email e può confermarla o rifiutarla.",
+        hint: "Il coordinatore riceve una notifica via email e conferma di averla letta.",
       };
     }
     return {
@@ -560,7 +562,7 @@
         target: "#requests-list",
         title: "Controlla l'esito",
         body: user.role === "professionista"
-          ? "In Richieste trovi lo stato della comunicazione: in attesa, confermata o rifiutata. Il campanello in alto segnala quando arriva una risposta."
+          ? "In Richieste trovi lo stato della comunicazione: in attesa di lettura, letta o da rivedere. Il campanello in alto segnala quando arriva una risposta."
           : "In Richieste trovi lo stato: in attesa, approvata o rifiutata. Il campanello in alto segnala quando arriva una risposta.",
       },
     ];
@@ -570,7 +572,7 @@
         view: "coord",
         target: "#coord-stats",
         title: "La coda del coordinatore",
-        body: "Qui vedi quante richieste aspettano una decisione e i giorni approvati nel mese. Approva o rifiuta dalla coda: la persona riceve l'email con l'esito.",
+        body: "Qui vedi quante richieste aspettano una risposta e i giorni approvati nel mese. Approva o rifiuta le richieste, prendi visione delle disponibilità: la persona riceve subito un'email.",
       });
       steps.push({
         icon: "users",
@@ -1020,9 +1022,11 @@
           aria-label="Rimuovi ${esc(fmtShortRange(run.start, run.end))}">×</button>
       </span>`).join("");
 
+    // Permessi e disponibilità possono coprire solo una parte della giornata.
+    const usesSlot = ["permesso", "disponibilita"].includes(state.form.type);
     $("#availability-selector").hidden = state.form.type !== "disponibilita";
-    $("#slot-field").hidden = state.form.type !== "permesso";
-    $("#time-range-field").hidden = !(state.form.type === "permesso" && state.form.slot === "orario");
+    $("#slot-field").hidden = !usesSlot;
+    $("#time-range-field").hidden = !(usesSlot && state.form.slot === "orario");
     $$('input[name="type"]').forEach((input) => { input.checked = input.value === state.form.type; });
     $$('input[name="availability"]').forEach((input) => { input.checked = input.value === state.form.availability; });
     $("#request-slot").value = state.form.slot || "giornata";
@@ -1035,7 +1039,8 @@
       ? "Ferie"
       : state.form.type === "permesso"
         ? "Permesso" + (state.form.slot && state.form.slot !== "giornata" ? " · " + formSlotLabel() : "")
-        : (state.form.availability === "disponibile" ? "Disponibile" : "Non disponibile");
+        : (state.form.availability === "disponibile" ? "Disponibile" : "Non disponibile")
+          + (state.form.slot && state.form.slot !== "giornata" ? " · " + formSlotLabel() : "");
     const runLabels = runs.map((run) => fmtShortRange(run.start, run.end));
     const periodLabel = runLabels.length === 1
       ? runLabels[0]
@@ -1124,11 +1129,11 @@
     }
   }
 
-  function statusPill(status) {
+  function statusPill(status, available = false) {
     const map = {
-      pending: ["status--pending", "In attesa"],
-      approved: ["status--approved", "Approvata"],
-      rejected: ["status--rejected", "Rifiutata"],
+      pending: ["status--pending", available ? "In attesa di lettura" : "In attesa"],
+      approved: ["status--approved", available ? "Letta" : "Approvata"],
+      rejected: ["status--rejected", available ? "Da rivedere" : "Rifiutata"],
       cancelled: ["status--cancelled", "Annullata"],
     };
     const [cls, label] = map[status] || ["status--pending", status];
@@ -1139,7 +1144,7 @@
     const box = $("#requests-list");
     if (!state.requests.length) {
       const intro = state.me && state.me.role === "professionista"
-        ? "Quando comunichi la tua disponibilità la trovi qui con l'esito."
+        ? "Quando comunichi la tua disponibilità la trovi qui con la conferma di lettura."
         : "Quando chiedi ferie o permessi li trovi qui con l'esito.";
       box.innerHTML = `<div class="empty-state"><h3>Nessuna richiesta</h3><p>${intro}</p></div>`;
       return;
@@ -1152,15 +1157,17 @@
               ${esc(typeLabel(req))}</div>
             <div class="req-period">${esc(fmtDays(req.dates))} · ${req.days} ${req.days === 1 ? "giorno" : "giorni"}</div>
           </div>
-          ${statusPill(req.status)}
+          ${statusPill(req.status, isAvailability(req))}
         </div>
         ${req.note ? `<div class="req-note">${esc(req.note)}</div>` : ""}
         <div class="req-foot">
           <span>${req.status === "pending"
-            ? "In attesa del coordinatore"
+            ? (isAvailability(req) ? "In attesa di lettura da parte del coordinatore" : "In attesa del coordinatore")
             : req.status === "cancelled"
               ? esc(req.decision_note || "Annullata")
-              : `Decisa il ${esc(new Date(req.decided_at).toLocaleDateString("it-IT"))}${req.decided_by_name ? " da " + esc(req.decided_by_name) : ""}`}
+              : isAvailability(req)
+                ? `${req.status === "approved" ? "Letta" : "Segnalata da rivedere"} il ${esc(new Date(req.decided_at).toLocaleDateString("it-IT"))}${req.decided_by_name ? " da " + esc(req.decided_by_name) : ""}`
+                : `Decisa il ${esc(new Date(req.decided_at).toLocaleDateString("it-IT"))}${req.decided_by_name ? " da " + esc(req.decided_by_name) : ""}`}
             ${req.status !== "cancelled" && req.decision_note ? ` · “${esc(req.decision_note)}”` : ""}</span>
           ${req.status === "pending"
             ? `<div class="req-actions"><button class="btn btn--ghost btn--xs" type="button" data-cancel="${req.id}">Annulla</button></div>`
@@ -1174,9 +1181,10 @@
   async function submitRequest(event) {
     event.preventDefault();
     if (!state.selected.size) return;
-    if (state.form.type === "permesso" && state.form.slot === "orario") {
+    const withSlot = ["permesso", "disponibilita"].includes(state.form.type);
+    if (withSlot && state.form.slot === "orario") {
       if (!state.form.timeFrom || !state.form.timeTo) {
-        toast("Indica l'orario di inizio e di fine del permesso.", "error");
+        toast("Indica l'orario di inizio e di fine.", "error");
         return;
       }
       if (state.form.timeTo <= state.form.timeFrom) {
@@ -1193,9 +1201,9 @@
         body: {
           type: state.form.type,
           availability: state.form.type === "disponibilita" ? state.form.availability : null,
-          slot: state.form.type === "permesso" ? state.form.slot : null,
-          time_from: state.form.type === "permesso" && state.form.slot === "orario" ? state.form.timeFrom : null,
-          time_to: state.form.type === "permesso" && state.form.slot === "orario" ? state.form.timeTo : null,
+          slot: withSlot ? state.form.slot : null,
+          time_from: withSlot && state.form.slot === "orario" ? state.form.timeFrom : null,
+          time_to: withSlot && state.form.slot === "orario" ? state.form.timeTo : null,
           dates: Array.from(state.selected),
           note: state.form.note,
         },
@@ -1236,12 +1244,14 @@
     const req = state.requests.find((item) => item.id === id);
     if (!req) return;
     openModal(`
-      <h3>Ritirare la richiesta?</h3>
+      <h3>${isAvailability(req) ? "Ritirare la comunicazione?" : "Ritirare la richiesta?"}</h3>
       <p class="modal-sub">${esc(typeLabel(req))} · ${esc(fmtDays(req.dates))}</p>
-      <p class="field-hint">La richiesta era già approvata: i giorni spariranno dal calendario del team e il coordinatore vedrà che l'hai ritirata.</p>
+      <p class="field-hint">${isAvailability(req)
+        ? "La comunicazione era già stata letta: sparirà dal calendario del team e il coordinatore vedrà che l'hai ritirata."
+        : "La richiesta era già approvata: i giorni spariranno dal calendario del team e il coordinatore vedrà che l'hai ritirata."}</p>
       <div class="modal-actions">
         <button class="btn btn--ghost btn--sm" type="button" data-close-modal>Lascia com'è</button>
-        <button class="btn btn--danger btn--sm" id="btn-confirm-withdraw" type="button">Ritira richiesta</button>
+        <button class="btn btn--danger btn--sm" id="btn-confirm-withdraw" type="button">${isAvailability(req) ? "Ritira comunicazione" : "Ritira richiesta"}</button>
       </div>`, (root) => {
       $("#btn-confirm-withdraw", root).addEventListener("click", async (event) => {
         const button = event.currentTarget;
@@ -1250,12 +1260,14 @@
         try {
           await api(`/api/requests/${encodeURIComponent(id)}/cancel`, { method: "POST", body: {} });
           closeModal();
-          toast("Richiesta ritirata: i giorni non sono più nel calendario.");
+          toast(isAvailability(req)
+            ? "Comunicazione ritirata: non è più nel calendario del team."
+            : "Richiesta ritirata: i giorni non sono più nel calendario.");
           await Promise.all([loadCalendar(), loadRequests(), loadCoord()]);
         } catch (error) {
           toast(error.message, "error");
           button.disabled = false;
-          button.textContent = "Ritira richiesta";
+          button.textContent = isAvailability(req) ? "Ritira comunicazione" : "Ritira richiesta";
         }
       });
     });
@@ -1278,7 +1290,7 @@
       $("#tab-coord-count").textContent = state.pending.length;
       $("#coord-pending-pill").textContent = state.pending.length;
       $("#coord-pending-text").textContent = state.pending.length
-        ? `${state.pending.length} richiesta${state.pending.length > 1 ? "e" : ""} in attesa di una decisione.`
+        ? `${state.pending.length} ${state.pending.length === 1 ? "richiesta" : "richieste"} in attesa di una decisione.`
         : "Nessuna richiesta in attesa.";
       await loadTeam();
       loadOutbox();
@@ -1682,14 +1694,14 @@
               <div class="req-type">${eventAvatar(req)}${esc(req.user_name)}</div>
               <div class="req-period">${esc(typeLabel(req))} · ${esc(fmtDays(req.dates))} · ${req.days} ${req.days === 1 ? "giorno" : "giorni"}</div>
             </div>
-            ${statusPill("pending")}
+            ${statusPill("pending", isAvailability(req))}
           </div>
           ${req.note ? `<div class="req-note">${esc(req.note)}</div>` : ""}
           <div class="decision-form" data-request="${esc(req.id)}">
             <textarea class="decision-note" maxlength="500" placeholder="Nota per ${esc(req.user_name.split(" ")[0])} (facoltativa)"></textarea>
             <div class="decision-actions">
-              <button class="btn btn--primary btn--sm" type="button" data-decision="approve" data-id="${esc(req.id)}">Approva</button>
-              <button class="btn btn--danger btn--sm" type="button" data-decision="reject" data-id="${esc(req.id)}">Rifiuta</button>
+              <button class="btn btn--primary btn--sm" type="button" data-decision="approve" data-id="${esc(req.id)}">${isAvailability(req) ? "Ho letto" : "Approva"}</button>
+              <button class="btn btn--danger btn--sm" type="button" data-decision="reject" data-id="${esc(req.id)}">${isAvailability(req) ? "Segnala da rivedere" : "Rifiuta"}</button>
             </div>
           </div>
         </article>`).join("");
@@ -1704,7 +1716,9 @@
           ${eventAvatar(req)}
           <span class="mini-main">
             <span class="mini-name">${esc(req.user_name)}</span>
-            <span class="mini-when">${esc(fmtDaysShort(req.dates))} · ${req.status === "approved" ? "approvata" : "rifiutata"}</span>
+            <span class="mini-when">${esc(fmtDaysShort(req.dates))} · ${isAvailability(req)
+              ? (req.status === "approved" ? "letta" : "da rivedere")
+              : (req.status === "approved" ? "approvata" : "rifiutata")}</span>
           </span>
           <button class="btn btn--ghost btn--xs" type="button" data-reevaluate="${esc(req.id)}" title="Rivaluta questa decisione">Rivaluta</button>
         </li>`).join("");
@@ -1712,12 +1726,16 @@
   }
 
   async function decide(id, decision, note) {
+    const req = [...(state.pending || []), ...(state.history || [])].find((item) => item.id === id);
+    const available = isAvailability(req);
     try {
       await api(`/api/requests/${encodeURIComponent(id)}/decision`, {
         method: "POST",
         body: { decision, note },
       });
-      toast(decision === "approve" ? "Richiesta approvata. Email inviata." : "Richiesta rifiutata. Email inviata.", "success");
+      toast(available
+        ? (decision === "approve" ? "Lettura registrata. Conferma inviata." : "Segnalato da rivedere. Email inviata.")
+        : (decision === "approve" ? "Richiesta approvata. Email inviata." : "Richiesta rifiutata. Email inviata."), "success");
       await Promise.all([loadCoord(), loadCalendar(), loadRequests(), loadNotifications()]);
     } catch (error) {
       toast(error.message, "error");
@@ -1733,14 +1751,14 @@
     openModal(`
       <h3>Rivaluta la richiesta</h3>
       <p class="modal-sub">${esc(req.user_name)} · ${esc(typeLabel(req))} · ${esc(fmtDays(req.dates))}</p>
-      ${statusPill(req.status)}
+      ${statusPill(req.status, isAvailability(req))}
       <label class="field"><span>Nota per ${esc(firstName)} <em>(facoltativa)</em></span>
         <textarea id="reeval-note" maxlength="500" rows="3" placeholder="Es. cambio turno concordato"></textarea></label>
       <p class="field-hint">Cambiando l'esito ${esc(firstName)} riceverà una nuova email e una notifica. Con “Metti in attesa” la richiesta torna in coda e non viene inviato alcun esito.</p>
       <div class="modal-actions">
         <button class="btn btn--ghost btn--sm" id="btn-reeval-reopen" type="button">Metti in attesa</button>
-        <button class="btn btn--danger btn--sm" type="button" data-reeval="reject">Rifiuta</button>
-        <button class="btn btn--primary btn--sm" type="button" data-reeval="approve">Approva</button>
+        <button class="btn btn--danger btn--sm" type="button" data-reeval="reject">${isAvailability(req) ? "Segnala da rivedere" : "Rifiuta"}</button>
+        <button class="btn btn--primary btn--sm" type="button" data-reeval="approve">${isAvailability(req) ? "Ho letto" : "Approva"}</button>
       </div>`, (root) => {
       $("#btn-reeval-reopen", root).addEventListener("click", async (event) => {
         const button = event.currentTarget;

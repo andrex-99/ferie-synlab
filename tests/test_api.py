@@ -247,7 +247,8 @@ class ApiTest(unittest.TestCase):
         # link già usato: nessuna seconda decisione
         status, page = self.call(self.client(), "/decide/%s?t=%s" % (request_id, token))
         self.assertEqual(status, 200)
-        self.assertIn("Rifiutata", page)
+        # La disponibilità non viene approvata né rifiutata: si segnala da rivedere.
+        self.assertIn("Da rivedere", page)
 
     def test_04_validazione_e_annullamento(self):
         giulia = self.login("giulia@studio.it")

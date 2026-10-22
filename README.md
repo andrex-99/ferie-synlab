@@ -9,9 +9,9 @@ Il coordinatore può creare gli accessi del team direttamente dall'app, senza us
 Flusso completo:
 
 1. Il dipendente o il libero professionista accede e seleziona i giorni sul calendario.
-2. Sceglie il tipo adatto al suo ruolo — **Ferie** o **Permesso** (giornata intera, mattina, pomeriggio o un orario personalizzato) per i dipendenti, **Disponibilità** (non disponibile / disponibile) per i liberi professionisti — e aggiunge una nota.
-3. Il coordinatore riceve un'**email** con il riepilogo e un link per **approvare o rifiutare** (per la disponibilità: **confermare o rifiutare**).
-4. Alla decisione parte un'**email di esito** al richiedente (con il file `.ics` quando ferie o permessi vengono approvati) e, se l'ha attivata, una **notifica push** sul telefono.
+2. Sceglie il tipo adatto al suo ruolo — **Ferie** o **Permesso** per i dipendenti e per il coordinatore, **Disponibilità** (non disponibile / disponibile) per i liberi professionisti — e aggiunge una nota. Permessi e disponibilità possono coprire solo una parte della giornata: mattina, pomeriggio o un orario personalizzato (es. **8:00–13:00**).
+3. Il coordinatore riceve un'**email** con il riepilogo e un link per **approvare o rifiutare**; per la disponibilità **prende visione** (o la segnala da rivedere).
+4. Il richiedente riceve un'**email** con l'esito (con il file `.ics` quando ferie o permessi vengono approvati) oppure, per la disponibilità, una **conferma di lettura** senza esito di approvazione; se l'ha attivata arriva anche una **notifica push** sul telefono.
 5. I giorni approvati compaiono nel **calendario condiviso** visibile a tutti, e restano disponibili come calendario `.ics` iscrivibile su iPhone/Android/Google Calendar.
 6. Il coordinatore ha una coda con contatori, statistiche del mese e il registro di tutte le email inviate; può **rivalutare** una decisione già presa, modificare i propri dati e **eliminare** gli accessi.
 
@@ -108,7 +108,7 @@ Note utili:
 
 ## Notifiche sul telefono
 
-Oltre all'email, ogni persona può ricevere una notifica push quando il coordinatore approva, conferma o rifiuta una richiesta: menu utente → **Attiva notifiche sul telefono** e conferma il permesso del browser. La notifica si tocca e apre l'app direttamente sulle richieste.
+Oltre all'email, ogni persona può ricevere una notifica push quando il coordinatore approva o rifiuta una richiesta, oppure prende visione di una disponibilità: menu utente → **Attiva notifiche sul telefono** e conferma il permesso del browser. La notifica si tocca e apre l'app direttamente sulle richieste.
 
 - Serve una connessione **HTTPS** (o `localhost`): su un indirizzo `http://` di rete locale i browser non permettono le notifiche.
 - Su **iPhone/iPad** funzionano da iOS 16.4 e solo con l'app aggiunta alla schermata Home.
@@ -147,8 +147,9 @@ Sono supportati sia **Resend** sia un normale **SMTP**. Senza nessuno dei due re
 
 ### Cosa contiene ogni email
 
-- **Richiesta al coordinatore**: riepilogo in tabella (richiedente, ruolo, tipo, fascia, periodo, giorni, nota), pulsanti **Approva** (o **Conferma** per la disponibilità) e **Rifiuta** che aprono la pagina di conferma (nessuna decisione viene presa da un semplice clic sul link), link all'app e `Reply-To` impostato sull'email del richiedente, così il coordinatore può rispondere direttamente.
+- **Richiesta al coordinatore**: riepilogo in tabella (richiedente, ruolo, tipo, fascia, periodo, giorni, nota), pulsanti **Approva** (o **Ho letto** per la disponibilità, accanto a **Segnala da rivedere**) e **Rifiuta** che aprono la pagina di conferma (nessuna decisione viene presa da un semplice clic sul link), link all'app e `Reply-To` impostato sull'email del richiedente, così il coordinatore può rispondere direttamente.
 - **Esito al richiedente**: esito evidenziato, dettagli, eventuale nota del coordinatore e, per ferie o permessi approvati, allegato `.ics` pronto per Apple/Google Calendar.
+- **Conferma di lettura**: per la disponibilità non esiste un'approvazione; il professionista riceve un'email che dice che il coordinatore ha preso visione della comunicazione (o che la segnala da rivedere), senza invito di calendario e senza parole come “approvata”.
 - **Promemoria**: una sola email per richiesta ancora in attesa dopo `REMINDER_HOURS` ore.
 - **Email di prova**: dal registro email, per verificare subito che il provider funzioni.
 
@@ -264,7 +265,7 @@ La scelta resta memorizzata nel browser del dispositivo e non modifica quella de
 python3 -m unittest discover -s tests -v
 ```
 
-Le **30 verifiche** avviano un server isolato con una cartella dati temporanea e coprono accesso e permessi, creazione richiesta, permessi con fascia oraria, **orario personalizzato** (normalizzazione, validazione, calendario ed email), approvazione dal link email anche senza login, rifiuto, calendario condiviso, notifiche, statistiche del coordinatore, reinvio dal registro email, file `.ics`, creazione utenti riservata al coordinatore, login del nuovo utente, colori e foto profilo (permessi, validazione, rimozione, accesso alle immagini), il riuso corretto delle connessioni HTTP (keep-alive), i **tipi di richiesta per ruolo**, il **ritiro di una richiesta approvata**, la **rivalutazione e riapertura** delle decisioni, la **modifica dei propri dati**, l'**eliminazione di un accesso** con le sue richieste, le **notifiche push** (chiavi VAPID, iscrizione, cancellazione dell'iscrizione, decisione con servizio push irraggiungibile), l'**URL pubblico HTTPS** dietro un reverse proxy, gli **account demo visibili anche da un indirizzo pubblico** e il **linguaggio coerente per la disponibilità** (pagina di conferma, email senza invito di calendario) con i **periodi non consecutivi** resi come giorni separati.
+Le **31 verifiche** avviano un server isolato con una cartella dati temporanea e coprono accesso e permessi, creazione richiesta, permessi con fascia oraria, **orario personalizzato** (normalizzazione, validazione, calendario ed email), approvazione dal link email anche senza login, rifiuto, calendario condiviso, notifiche, statistiche del coordinatore, reinvio dal registro email, file `.ics`, creazione utenti riservata al coordinatore, login del nuovo utente, colori e foto profilo (permessi, validazione, rimozione, accesso alle immagini), il riuso corretto delle connessioni HTTP (keep-alive), i **tipi di richiesta per ruolo** (coordinatore compreso, che non comunica la disponibilità), il **ritiro di una richiesta approvata**, la **rivalutazione e riapertura** delle decisioni, la **modifica dei propri dati**, l'**eliminazione di un accesso** con le sue richieste, le **notifiche push** (chiavi VAPID, iscrizione, cancellazione dell'iscrizione, decisione con servizio push irraggiungibile), l'**URL pubblico HTTPS** dietro un reverse proxy, gli **account demo visibili anche da un indirizzo pubblico**, la **disponibilità con fascia oraria** (orario personalizzato in email, pagina di conferma e conferma di lettura) e il **linguaggio coerente per la disponibilità** (conferma di lettura al posto dell'approvazione, nessun invito di calendario) con i **periodi non consecutivi** resi come giorni separati.
 I test della crittografia (`tests/test_webpush.py`) verificano la cifratura `aes128gcm` e la firma ES256 contro i vettori ufficiali di RFC 8291 e RFC 7515.
 
 ---

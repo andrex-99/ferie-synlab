@@ -120,7 +120,8 @@ class FeatureTest(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(config["types_by_role"]["professionista"], ["disponibilita"])
         self.assertEqual(config["types_by_role"]["dipendente"], ["ferie", "permesso"])
-        self.assertEqual(len(config["types_by_role"]["coordinatore"]), 3)
+        # Il coordinatore non comunica la disponibilità: chiede ferie e permessi.
+        self.assertEqual(config["types_by_role"]["coordinatore"], ["ferie", "permesso"])
 
         sara = self.login("sara@studio.it")
         for kind in ("ferie", "permesso"):
@@ -142,6 +143,9 @@ class FeatureTest(unittest.TestCase):
         status, data = self.create(coordinator, {"type": "disponibilita",
                                                 "availability": "disponibile",
                                                 "dates": [future(302)]})
+        self.assertEqual(status, 403, data)
+        status, data = self.create(coordinator, {"type": "permesso", "slot": "mattina",
+                                                "dates": [future(303)]})
         self.assertEqual(status, 201, data)
 
     def test_02_dipendente_ritira_una_richiesta_approvata(self):
@@ -371,10 +375,11 @@ class FeatureTest(unittest.TestCase):
         self.assertEqual(status, 201, data)
         request_id = data["request"]["id"]
 
-        # La pagina aperta dal link email parla di conferma, non di approvazione
+        # La pagina aperta dal link email chiede di prendere visione, non di approvare
         with urllib.request.urlopen(data["decision_link"]) as response:
             page = response.read().decode("utf-8")
-        self.assertIn("Conferma", page)
+        self.assertIn("Ho letto", page)
+        self.assertIn("Segnala da rivedere", page)
         self.assertNotIn(">Approva<", page)
         self.assertIn("disponibilità", page.lower())
 
@@ -393,8 +398,13 @@ class FeatureTest(unittest.TestCase):
         status, outbox = self.json_call(coordinator, "/api/outbox")
         outcome = outbox["messages"][0]
         self.assertEqual(outcome["to"], "sara@studio.it")
-        self.assertTrue(outcome["subject"].startswith("✓ Disponibilità confermata"), outcome["subject"])
+        # Non è un'approvazione: è una conferma di lettura
+        self.assertTrue(outcome["subject"].startswith("✓ Comunicazione letta"), outcome["subject"])
+        self.assertNotIn("approvat", outcome["subject"].lower())
         self.assertEqual(outcome["attachments"], 0)
+        status, html = self.call(coordinator, "/api/outbox/%s" % outcome["id"])
+        self.assertIn("preso visione", html)
+        self.assertNotIn("è stata approvata", html)
 
     def test_09_periodi_non_contigui(self):
         days = [server.parse_day(day) for day in ("2026-11-03", "2026-11-04", "2026-11-10")]
@@ -424,6 +434,47 @@ class FeatureTest(unittest.TestCase):
         status, config = self.json_call(self.client(), "/api/config")
         self.assertEqual(status, 200)
         self.assertTrue(config["base_url"].startswith("http://"), config["base_url"])
+
+    def test_11_disponibilita_con_fascia_oraria(self):
+        sara = self.login("sara@studio.it")
+        coordinator = self.login("coordinatore@studio.it")
+        day = future(160)
+
+        status, data = self.create(sara, {"type": "disponibilita", "availability": "disponibile",
+                                          "dates": [day], "slot": "orario",
+                                          "time_from": "8:00", "time_to": "13:00"})
+        self.assertEqual(status, 201, data)
+        request = data["request"]
+        self.assertEqual(request["slot"], "orario")
+        self.assertEqual(request["slot_label"], "08:00–13:00")
+
+        # La fascia compare nell'email al coordinatore, non solo il giorno
+        status, outbox = self.json_call(coordinator, "/api/outbox")
+        notice = next(message for message in outbox["messages"]
+                      if message["to"] == "coordinatore@studio.it")
+        status, html = self.call(coordinator, "/api/outbox/%s" % notice["id"])
+        self.assertIn("08:00–13:00", html)
+
+        # E nella conferma di lettura che riceve il professionista
+        status, data = self.json_call(coordinator, "/api/requests/%s/decision" % request["id"],
+                                      "POST", {"decision": "approve"})
+        self.assertEqual(status, 200, data)
+        status, outbox = self.json_call(coordinator, "/api/outbox")
+        outcome = outbox["messages"][0]
+        status, html = self.call(coordinator, "/api/outbox/%s" % outcome["id"])
+        self.assertIn("08:00–13:00", html)
+
+        # Un orario incoerente viene rifiutato
+        status, data = self.create(sara, {"type": "disponibilita", "availability": "disponibile",
+                                          "dates": [future(163)], "slot": "orario",
+                                          "time_from": "13:00", "time_to": "09:00"})
+        self.assertEqual(status, 400, data)
+
+        # La giornata intera resta il comportamento predefinito
+        status, data = self.create(sara, {"type": "disponibilita", "availability": "non_disponibile",
+                                          "dates": [future(164)]})
+        self.assertEqual(status, 201, data)
+        self.assertEqual(data["request"]["slot"], "giornata")
 
 
 if __name__ == "__main__":
