@@ -58,7 +58,7 @@ Cosa aspettarsi dal piano gratuito:
 
 ### Uso reale: sempre acceso, gratis
 
-[**docs/hosting.md**](docs/hosting.md) spiega come passare a una macchina **sempre accesa con disco persistente** senza spendere nulla (Oracle Cloud Always Free, oppure Google e2-micro): i file [deploy/docker-compose.yml](deploy/docker-compose.yml) e [deploy/Caddyfile](deploy/Caddyfile) avviano l'app con HTTPS automatico in due comandi, e funzionano anche senza un dominio tuo. Nella stessa guida c'è il confronto dei provider email gratuiti (Gmail, Brevo, Resend) con le variabili da copiare nel `.env`.
+[**docs/hosting.md**](docs/hosting.md) spiega come passare a una macchina **sempre accesa con disco persistente** senza spendere nulla (Oracle Cloud Always Free, oppure Google e2-micro): i file [deploy/docker-compose.yml](deploy/docker-compose.yml) e [deploy/Caddyfile](deploy/Caddyfile) avviano l'app con HTTPS automatico in due comandi, e funzionano anche senza un dominio tuo. Nella stessa guida ci sono anche il confronto dei provider email gratuiti (Gmail, Brevo, Resend) con le variabili da copiare nel `.env`, i controlli per verificare che le email partano davvero e la risposta alla domanda **Cloudflare**: va bene come tunnel HTTPS verso una macchina tua, non come host gratuito dell'app (i Containers richiedono un piano a pagamento e azzerano il disco a ogni riavvio).
 
 ---
 
@@ -140,7 +140,12 @@ cp .env.example .env
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS` | Alternativa SMTP (Gmail, Outlook, Aruba, ecc.) |
 | `SMTP_STARTTLS` | `1` (default, porta 587) oppure `0` per SSL diretto (porta 465) |
 | `COORDINATOR_EMAILS` | Email aggiuntive che ricevono le richieste, separate da virgola |
+| `ADMIN_EMAILS` | Email separate da virgola che vedono la **Diagnostica** anche senza ruolo amministratore |
 | `REMINDER_HOURS` | Dopo quante ore inviare un promemoria al coordinatore per una richiesta ancora in attesa (default `24`, `0` per disattivarlo) |
+| `WEEKLY_DIGEST` | Riepilogo settimanale delle assenze ai coordinatori (default attivo, `0` per disattivarlo) |
+| `WEEKLY_DIGEST_WEEKDAY` | Giorno in cui parte il riepilogo: `0` lunedì … `3` giovedì (default) … `6` domenica. Il coordinatore può cambiarlo dall'app, e la scelta salvata ha la precedenza su questa variabile |
+| `WEEKLY_DIGEST_HOUR` | Ora locale di invio, da `0` a `23` (default `8`) |
+| `TZ` | Fuso orario con cui viene calcolata l'ora del riepilogo (default `Europe/Rome`) |
 | `VAPID_SUBJECT` | Contatto (`mailto:` o URL) incluso nelle notifiche push; default `MAIL_FROM` |
 
 Sono supportati sia **Resend** sia un normale **SMTP**. Senza nessuno dei due resta attiva la modalità simulata.
@@ -151,6 +156,7 @@ Sono supportati sia **Resend** sia un normale **SMTP**. Senza nessuno dei due re
 - **Esito al richiedente**: esito evidenziato, dettagli, eventuale nota del coordinatore e, per ferie o permessi approvati, allegato `.ics` pronto per Apple/Google Calendar.
 - **Conferma di lettura**: per la disponibilità non esiste un'approvazione; il professionista riceve un'email che dice che il coordinatore ha preso visione della comunicazione (o che la segnala da rivedere), senza invito di calendario e senza parole come “approvata”.
 - **Promemoria**: una sola email per richiesta ancora in attesa dopo `REMINDER_HOURS` ore.
+- **Riepilogo settimanale**: ogni giovedì mattina (configurabile) i coordinatori ricevono le assenze già approvate per la settimana successiva, giorno per giorno: «lunedì 26: Giulia Rossi — Ferie; martedì 27: Sara Conti — Permesso 08:00–13:00». Conta solo ferie e permessi approvati: le disponibilità, le richieste in attesa e quelle annullate restano fuori. Se la settimana è vuota non viene inviato nulla; il riepilogo parte una sola volta a settimana anche se il server si riavvia, e se il server era spento nel giorno previsto viene recuperato al primo controllo utile. Dal registro email il coordinatore può anche inviarlo subito con **Invia riepilogo settimanale** e spostare il giorno con **Riepilogo ogni** (la scelta resta salvata in `db.json` e vale per tutti, senza toccare il `.env`); l'ora resta quella di `WEEKLY_DIGEST_HOUR`.
 - **Email di prova**: dal registro email, per verificare subito che il provider funzioni.
 
 Tutte le email sono responsive (Gmail, Outlook, Apple Mail), hanno una versione testuale, un preheader e un `Message-ID` coerente. Gli invii usano una chiave di idempotenza quando il provider la supporta, così un doppio clic non genera doppioni. Il registro mostra mittente, destinatario, errori e consente di **reinviare** un messaggio fallito (anche con l'allegato `.ics`).
@@ -219,9 +225,17 @@ python3 server.py setpin --email anna.verdi@synlab.it --pin 1234
 python3 server.py removeuser --email anna.verdi@synlab.it
 ```
 
-Ruoli: `dipendente`, `professionista`, `coordinatore`. Solo i coordinatori vedono il tab **Coordinamento**, ricevono le email di richiesta e possono decidere. Un coordinatore può comunque inviare le proprie richieste (le decide un altro coordinatore, o lo stesso dall'app).
+Ruoli: `dipendente`, `professionista`, `coordinatore` e `admin`. Solo i coordinatori vedono il tab **Coordinamento**, ricevono le email di richiesta e possono decidere. Un coordinatore può comunque inviare le proprie richieste (le decide un altro coordinatore, o lo stesso dall'app).
 
 Il PIN è salvato come hash `scrypt` con salt; l'app non conserva mai il PIN in chiaro.
+
+### Amministratore (diagnostica)
+
+L'account **Amministratore** serve quando qualcosa non funziona. Nella scheda **Diagnostica** vede: stato e tempo di attività del server, fuso orario, percorso e dimensione del database, conteggi di utenti e richieste, configurazione email (provider, mittente, promemoria, riepilogo settimanale), stato delle notifiche push, ultime email con l'HTML originale, errori e ultime righe di log.
+
+È un accesso di **sola lettura**: non approva richieste, non crea accessi, non reinvia email, non riceve il riepilogo settimanale e non compare nelle richieste. Un account con ruolo `admin` non vede nemmeno calendario e richieste: ha solo la Diagnostica.
+
+Si crea come gli altri accessi, scegliendo il ruolo **Amministratore (diagnostica)**; in alternativa si promuove un account già esistente inserendo la sua email in `ADMIN_EMAILS` (utile se il coordinatore non riesce più ad accedere). I log sono tenuti in memoria (ultime 400 righe) e ripartono vuoti a ogni riavvio del server; contengono nomi e indirizzi email, quindi vanno trattati come dati riservati.
 
 ---
 
@@ -232,11 +246,12 @@ Nel calendario si vedono:
 - **Ferie approvate** di tutto il team, con il colore della persona.
 - **Permessi e disponibilità** con lo stesso colore della persona; la lettera nel segno indica il tipo: `F` ferie, `P` permesso, `N` non disponibile, `D` disponibile. Per i permessi con **orario personalizzato** il dettaglio mostra la fascia scelta, per esempio `09:00–13:00`.
 - Le **proprie richieste in attesa** (tratteggio). Il coordinatore vede anche quelle degli altri.
+- I **compleanni** del team, segnati con 🎂 accanto al numero del giorno: il nome compare nel tooltip e, aprendo un giorno con eventi, anche nell'elenco. Si impostano da **I miei dati** scegliendo giorno e mese (l'anno non viene chiesto né salvato); chi non vuole mostrarli lascia «Non indicato».
 - Un avviso quando nei giorni scelti ci sono già colleghi assenti.
 
 Ogni persona ha un colore diverso, usato anche nell'avatar, nelle richieste e nell'elenco del team. Su telefono i giorni mostrano il segno colorato con la lettera del tipo, così il calendario resta leggibile anche in poco spazio.
 
-Le **domeniche** sono evidenziate in rosso perché non sono giorni lavorativi, ma restano visibili nel calendario e selezionabili come gli altri giorni.
+Le **domeniche** sono evidenziate in rosso perché non sono giorni lavorativi, ma restano visibili nel calendario e selezionabili come gli altri giorni. Lo stesso rosso segna le **festività nazionali italiane** — Capodanno, Epifania, 25 aprile, 1 maggio, 2 giugno, Ferragosto, Ognissanti, Immacolata, Natale, Santo Stefano e il Lunedì dell'Angelo (calcolato anno per anno) — con il nome della festività nel tooltip del giorno. Non sono incluse le festività del santo patrono, che cambiano da città a città, ma restano selezionabili come le domeniche.
 
 ![Permesso con orario personalizzato](screenshots/permesso-orario.png)
 
@@ -329,7 +344,7 @@ data/vapid.json        chiavi VAPID per le notifiche push (generate al primo uso
 | `GET` | `/api/requests/pending` | coda e statistiche del coordinatore |
 | `POST` | `/api/requests/:id/decision` | approva, rifiuta o **rivaluta** una decisione presa (coordinatore) |
 | `POST` | `/api/requests/:id/reopen` | rimette in attesa una richiesta già decisa (coordinatore) |
-| `POST` | `/api/profile` | modifica nome ed email del proprio account |
+| `POST` | `/api/profile` | modifica nome, email e compleanno (giorno e mese) del proprio account |
 | `GET` | `/api/users` | elenco persone e palette colori (coordinatore) |
 | `POST` | `/api/users` | crea un accesso con colore e foto (coordinatore) |
 | `POST` | `/api/users/:id/delete` | elimina un accesso e le sue richieste (coordinatore) |
@@ -338,9 +353,12 @@ data/vapid.json        chiavi VAPID per le notifiche push (generate al primo uso
 | `POST` | `/api/push/subscribe` | salva la sottoscrizione push di un dispositivo |
 | `POST` | `/api/push/unsubscribe` | rimuove la sottoscrizione push |
 | `GET` | `/avatar/:file` | foto profilo, solo con sessione attiva |
-| `GET` | `/api/outbox` | registro email (coordinatore) |
+| `GET` | `/api/outbox` | registro email (coordinatore o amministratore) |
 | `POST` | `/api/outbox/:id/resend` | reinvia un'email dal registro |
 | `POST` | `/api/test-email` | invia un'email di prova al coordinatore |
+| `POST` | `/api/weekly-digest` | invia subito il riepilogo settimanale delle assenze (coordinatore) |
+| `POST` | `/api/weekly-digest/settings` | sposta il giorno del riepilogo settimanale (coordinatore) |
+| `GET` | `/api/admin/diagnostics` | stato, log, errori ed email recenti (amministratore) |
 | `GET` | `/decide/:id?t=token` | pagina di decisione dal link email |
 | `GET` | `/calendar.ics?t=token` | calendario approvato `.ics` |
 

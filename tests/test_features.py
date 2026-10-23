@@ -17,8 +17,9 @@ import time
 import unittest
 import urllib.error
 import urllib.request
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -475,6 +476,272 @@ class FeatureTest(unittest.TestCase):
                                           "dates": [future(164)]})
         self.assertEqual(status, 201, data)
         self.assertEqual(data["request"]["slot"], "giornata")
+
+    def test_12_riepilogo_settimanale_solo_per_coordinatori(self):
+        # L'endpoint esiste ed è riservato al coordinatore.
+        giulia = self.login("giulia@studio.it")
+        status, data = self.json_call(giulia, "/api/weekly-digest", "POST", {})
+        self.assertEqual(status, 403, data)
+
+        coordinator = self.login("coordinatore@studio.it")
+        status, data = self.json_call(coordinator, "/api/weekly-digest", "POST", {})
+        # In demo non c'è un servizio email: il messaggio spiega cosa configurare.
+        self.assertEqual(status, 400, data)
+        self.assertIn("email", data["error"].lower())
+
+    def test_13_compleanno_sul_calendario_condiviso(self):
+        giulia = self.login("giulia@studio.it")
+        luca = self.login("luca@studio.it")
+
+        # Il compleanno si imposta dal proprio profilo, senza anno.
+        status, data = self.json_call(giulia, "/api/profile", "POST",
+                                      {"name": "Giulia Rossi", "email": "giulia@studio.it",
+                                       "birthday": "02-29"})
+        self.assertEqual(status, 200, data)
+        self.assertEqual(data["user"]["birthday"], "02-29")
+
+        # Lo vede tutto il team e compare solo nel periodo richiesto.
+        status, calendar = self.json_call(luca, "/api/calendar?from=2028-02-01&to=2028-03-05")
+        self.assertEqual(status, 200, calendar)
+        leap = [item for item in calendar["birthdays"] if item["user_name"] == "Giulia Rossi"]
+        self.assertEqual(len(leap), 1, calendar["birthdays"])
+        self.assertEqual(leap[0]["date"], "2028-02-29")
+        self.assertEqual(leap[0]["day_month"], "02-29")
+
+        # Negli anni non bisestili il 29 febbraio cade il 28.
+        status, calendar = self.json_call(luca, "/api/calendar?from=2029-02-01&to=2029-03-05")
+        dates = [item["date"] for item in calendar["birthdays"] if item["user_name"] == "Giulia Rossi"]
+        self.assertEqual(dates, ["2029-02-28"])
+
+        status, calendar = self.json_call(luca, "/api/calendar?from=2028-03-01&to=2028-03-31")
+        self.assertFalse([item for item in calendar["birthdays"] if item["user_name"] == "Giulia Rossi"])
+
+        # Una data inesistente viene rifiutata.
+        status, data = self.json_call(giulia, "/api/profile", "POST",
+                                      {"name": "Giulia Rossi", "email": "giulia@studio.it",
+                                       "birthday": "02-30"})
+        self.assertEqual(status, 400, data)
+
+        # Aggiornare nome ed email senza toccare il compleanno lo conserva.
+        status, data = self.json_call(giulia, "/api/profile", "POST",
+                                      {"name": "Giulia Rossi", "email": "giulia@studio.it"})
+        self.assertEqual(status, 200, data)
+        self.assertEqual(data["user"]["birthday"], "02-29")
+
+        # E si può togliere lasciando vuoto il campo.
+        status, data = self.json_call(giulia, "/api/profile", "POST",
+                                      {"name": "Giulia Rossi", "email": "giulia@studio.it",
+                                       "birthday": ""})
+        self.assertEqual(status, 200, data)
+        self.assertIsNone(data["user"]["birthday"])
+
+    def test_14_giorno_del_riepilogo_personalizzabile(self):
+        giulia = self.login("giulia@studio.it")
+        coordinator = self.login("coordinatore@studio.it")
+
+        # Solo il coordinatore può spostare il riepilogo.
+        status, data = self.json_call(giulia, "/api/weekly-digest/settings", "POST", {"weekday": 2})
+        self.assertEqual(status, 403, data)
+
+        status, data = self.json_call(coordinator, "/api/weekly-digest/settings", "POST", {"weekday": 7})
+        self.assertEqual(status, 400, data)
+
+        status, config = self.json_call(coordinator, "/api/config")
+        self.assertEqual(config["weekly_digest"]["weekday"], 3)  # default: giovedì
+        self.assertFalse(config["weekly_digest"]["custom_weekday"])
+
+        status, data = self.json_call(coordinator, "/api/weekly-digest/settings", "POST", {"weekday": 2})
+        self.assertEqual(status, 200, data)
+        self.assertEqual(data["weekly_digest"]["weekday"], 2)
+        self.assertEqual(data["weekly_digest"]["weekday_label"], "mercoledì")
+
+        # La scelta vale per tutto il team, anche per chi non l'ha impostata.
+        status, config = self.json_call(giulia, "/api/config")
+        self.assertEqual(config["weekly_digest"]["weekday"], 2)
+        self.assertTrue(config["weekly_digest"]["custom_weekday"])
+
+        # Riporta il default per lasciare l'ambiente come l'abbiamo trovato.
+        status, _ = self.json_call(coordinator, "/api/weekly-digest/settings", "POST", {"weekday": 3})
+        self.assertEqual(status, 200)
+
+    def test_15_area_amministratore_solo_diagnostica(self):
+        coordinator = self.login("coordinatore@studio.it")
+        giulia = self.login("giulia@studio.it")
+
+        status, data = self.json_call(coordinator, "/api/users", "POST",
+                                      {"name": "Tecnico Demo", "email": "admin@studio.it",
+                                       "role": "admin", "pin": "5555"})
+        self.assertEqual(status, 201, data)
+        self.assertTrue(data["user"]["admin"])
+        self.assertEqual(data["user"]["role"], "admin")
+
+        admin = self.login("admin@studio.it", "5555")
+        status, session = self.json_call(admin, "/api/session")
+        self.assertEqual(status, 200)
+        self.assertTrue(session["user"]["admin"])
+        self.assertEqual(session["allowed_types"], [])
+
+        status, diag = self.json_call(admin, "/api/admin/diagnostics")
+        self.assertEqual(status, 200, diag)
+        for key in ("server", "storage", "counts", "email", "push", "logs", "errors", "outbox_recent"):
+            self.assertIn(key, diag)
+        self.assertEqual(diag["email"]["provider"], "demo")
+        self.assertIsInstance(diag["logs"], list)
+        self.assertGreaterEqual(diag["counts"]["users"], 5)
+
+        # Sola lettura: niente richieste, decisioni o nuovi accessi.
+        status, data = self.create(admin, {"type": "ferie", "dates": [future(400)]})
+        self.assertEqual(status, 403, data)
+        self.assertIn("non può inviare", data["error"])
+
+        status, data = self.create(giulia, {"type": "ferie", "dates": [future(401)]})
+        self.assertEqual(status, 201, data)
+        pending_id = data["request"]["id"]
+        status, data = self.json_call(admin, "/api/requests/%s/decision" % pending_id, "POST",
+                                      {"decision": "approve"})
+        self.assertEqual(status, 403, data)
+        status, data = self.json_call(admin, "/api/requests/pending")
+        self.assertEqual(status, 403, data)
+        status, data = self.json_call(admin, "/api/users", "POST",
+                                      {"name": "Altro", "email": "altro@studio.it",
+                                       "role": "dipendente", "pin": "6666"})
+        self.assertEqual(status, 403, data)
+
+        # Può consultare il registro email, ma non reinviare né fare prove.
+        status, data = self.json_call(admin, "/api/outbox")
+        self.assertEqual(status, 200, data)
+        status, _ = self.json_call(admin, "/api/outbox/x/resend", "POST", {})
+        self.assertEqual(status, 403)
+        status, _ = self.json_call(admin, "/api/test-email", "POST", {})
+        self.assertEqual(status, 403)
+
+        # La diagnostica resta chiusa a chi non è amministratore.
+        status, data = self.json_call(giulia, "/api/admin/diagnostics")
+        self.assertEqual(status, 403, data)
+
+
+class AdminPolicyTest(unittest.TestCase):
+    def test_promozione_tramite_variabile_admin_emails(self):
+        user = {"role": "dipendente", "email": "capo@studio.it"}
+        self.assertFalse(server.is_admin(user))
+        with mock.patch.object(server, "ADMIN_EMAILS", ["capo@studio.it"]):
+            self.assertTrue(server.is_admin(user))
+            self.assertFalse(server.is_admin({"role": "dipendente", "email": "altro@studio.it"}))
+        self.assertTrue(server.is_admin({"role": "admin", "email": "x@y.it"}))
+        self.assertFalse(server.is_admin(None))
+
+
+class WeeklyDigestTest(unittest.TestCase):
+    """Riepilogo delle assenze della settimana prossima (funzioni, senza server)."""
+
+    def setUp(self):
+        self.db = {
+            "users": [
+                {"id": "u_g", "name": "Giulia Rossi", "email": "giulia@studio.it", "role": "dipendente"},
+                {"id": "u_l", "name": "Luca Ferrari", "email": "luca@studio.it", "role": "dipendente"},
+                {"id": "u_s", "name": "Sara Conti", "email": "sara@studio.it", "role": "professionista"},
+                {"id": "u_c", "name": "Marco Bianchi", "email": "coordinatore@studio.it", "role": "coordinatore"},
+            ],
+            "requests": [
+                {"id": "r_1", "user_id": "u_g", "type": "ferie", "dates": ["2026-10-27", "2026-10-28"],
+                 "status": "approved"},
+                {"id": "r_2", "user_id": "u_s", "type": "permesso", "dates": ["2026-10-29"],
+                 "slot": "orario", "time_from": "08:00", "time_to": "13:00", "status": "approved"},
+                {"id": "r_3", "user_id": "u_l", "type": "ferie", "dates": ["2026-10-27"],
+                 "status": "pending"},
+                {"id": "r_4", "user_id": "u_s", "type": "disponibilita", "availability": "disponibile",
+                 "dates": ["2026-10-27"], "status": "approved"},
+                {"id": "r_5", "user_id": "u_l", "type": "ferie", "dates": ["2026-10-26"],
+                 "status": "cancelled"},
+            ],
+            "meta": {},
+        }
+
+    def test_13_raggruppa_le_assenze_approvate_per_giorno(self):
+        start, end = server.next_week_bounds(date(2026, 10, 22))  # giovedì
+        self.assertEqual((start.isoformat(), end.isoformat()), ("2026-10-26", "2026-11-01"))
+
+        rows = server.weekly_absences(self.db, start, end)
+        days = [row["day"].isoformat() for row in rows]
+        # Solo ferie e permessi approvati: fuori la richiesta in attesa, la
+        # disponibilità e quella annullata.
+        self.assertEqual(days, ["2026-10-27", "2026-10-28", "2026-10-29"])
+        self.assertEqual([user["name"] for user, _req in rows[0]["entries"]], ["Giulia Rossi"])
+
+        subject, html, text = server.weekly_digest_email(rows, start, end, "https://esempio.it")
+        self.assertEqual(subject, "3 assenze programmate la settimana prossima · 26 ottobre – 1 novembre 2026")
+        self.assertIn("Giulia Rossi", html)
+        self.assertIn("Sara Conti", html)
+        self.assertGreaterEqual(html.count("08:00–13:00"), 1)
+        self.assertNotIn("Luca Ferrari", html)
+        self.assertIn("In totale: Giulia Rossi 2 giorni, Sara Conti 1 giorno.", html)
+        self.assertIn("martedì 27 ottobre", text)
+        self.assertIn("https://esempio.it/", text)
+
+    def test_14_invia_ai_coordinatori(self):
+        with mock.patch.object(server, "email_configured", return_value=True), \
+                mock.patch.object(server, "send_mail", return_value={"error": None}) as mailer:
+            result = server.deliver_weekly_digest(self.db, datetime(2026, 10, 22, 8, 0))
+
+        self.assertEqual(result["sent"], 1)
+        self.assertEqual(result["recipients"], ["coordinatore@studio.it"])
+        to, subject, html, text = mailer.call_args.args[:4]
+        self.assertEqual(to, "coordinatore@studio.it")
+        self.assertIn("3 assenze programmate", subject)
+        self.assertIn("permesso", html.lower())
+        self.assertIn("Giulia Rossi", text)
+        self.assertEqual(mailer.call_args.kwargs["idempotency_key"], "digest-2026-10-26-u_c")
+
+    def runtime_patches(self):
+        return mock.patch.multiple(
+            server, email_configured=mock.Mock(return_value=True),
+            load_db=mock.Mock(side_effect=lambda: self.db),
+            save_db=mock.Mock(), send_mail=mock.Mock(return_value={"error": None}))
+
+    def test_15_una_sola_volta_a_settimana_giovedi_mattina(self):
+        with self.runtime_patches():
+            # Giovedì prima delle 8: niente da fare
+            early = server.run_weekly_digest(now=datetime(2026, 10, 22, 7, 30))
+            self.assertEqual(early["sent"], 0)
+            self.assertTrue(early["skipped"])
+
+            sent = server.run_weekly_digest(now=datetime(2026, 10, 22, 8, 30))
+            self.assertEqual(sent["sent"], 1)
+            self.assertEqual(self.db["meta"]["weekly_digest_week"], "2026-10-26")
+
+            # Un riavvio lo stesso giorno non deve inviare di nuovo
+            again = server.run_weekly_digest(now=datetime(2026, 10, 22, 15, 0))
+            self.assertEqual(again["sent"], 0)
+
+            # Se il server era spento giovedì, il riepilogo parte al primo
+            # controllo utile della settimana seguente (venerdì mattina).
+            self.db["meta"] = {}
+            late = server.run_weekly_digest(now=datetime(2026, 10, 23, 9, 0))
+            self.assertEqual(late["sent"], 1)
+
+            # Nessuna assenza: non si invia un'email vuota.
+            self.db["meta"] = {}
+            self.db["requests"] = []
+            empty = server.run_weekly_digest(now=datetime(2026, 10, 29, 9, 0))
+            self.assertEqual(empty["sent"], 0)
+            self.assertIn("nessuna assenza", empty["skipped"])
+
+    def test_16_giorno_del_riepilogo_scelto_dai_coordinatore(self):
+        with self.runtime_patches():
+            # Sabato scelto dal coordinatore: mercoledì non parte nulla.
+            self.db["meta"] = {"weekly_digest_weekday": 5}
+            not_yet = server.run_weekly_digest(now=datetime(2026, 10, 21, 9, 0))
+            self.assertEqual(not_yet["sent"], 0)
+
+            # Spostato al mercoledì, parte mercoledì mattina e una sola volta.
+            self.db["meta"] = {"weekly_digest_weekday": 2}
+            sent = server.run_weekly_digest(now=datetime(2026, 10, 21, 8, 5))
+            self.assertEqual(sent["sent"], 1)
+            self.assertEqual(self.db["meta"]["weekly_digest_week"], "2026-10-26")
+            self.assertEqual(self.db["meta"]["weekly_digest_weekday"], 2)
+
+            again = server.run_weekly_digest(now=datetime(2026, 10, 22, 9, 0))
+            self.assertEqual(again["sent"], 0)
 
 
 if __name__ == "__main__":

@@ -12,7 +12,7 @@
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" href="/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
-<link rel="stylesheet" href="/styles.css?v=20261023a">
+<link rel="stylesheet" href="/styles.css?v=20261023i">
 </head>
 <body>
 
@@ -72,9 +72,10 @@
       </div>
 
       <nav class="tabs" id="tabs" aria-label="Sezioni">
-        <button class="tab is-active" data-view="calendar" type="button">Calendario</button>
-        <button class="tab" data-view="requests" type="button">Richieste <span class="tab-count" id="tab-requests-count" hidden></span></button>
+        <button class="tab is-active" data-view="calendar" type="button" id="tab-calendar">Calendario</button>
+        <button class="tab" data-view="requests" type="button" id="tab-requests">Richieste <span class="tab-count" id="tab-requests-count" hidden></span></button>
         <button class="tab" data-view="coord" type="button" id="tab-coord" hidden>Coordinamento <span class="tab-count" id="tab-coord-count" hidden></span></button>
+        <button class="tab" data-view="admin" type="button" id="tab-admin" hidden>Diagnostica</button>
       </nav>
 
       <div class="topbar-actions">
@@ -383,10 +384,31 @@
             <div class="email-status"><span class="email-dot" id="email-dot"></span><span id="email-status-text">Verifico…</span></div>
             <p class="mini-text" id="outbox-hint">Le email sono salvate qui perché non è configurato un servizio di invio.</p>
             <button class="btn btn--ghost btn--sm btn--block" id="btn-test-email" type="button" hidden>Invia email di prova</button>
+            <button class="btn btn--ghost btn--sm btn--block" id="btn-weekly-digest" type="button" hidden
+                    title="Riepilogo delle assenze approvate per la settimana prossima">Invia riepilogo settimanale</button>
+            <div class="digest-settings" id="digest-settings" hidden>
+              <label for="digest-weekday">Riepilogo ogni</label>
+              <select id="digest-weekday" aria-label="Giorno di invio del riepilogo settimanale"></select>
+              <span class="digest-time" id="digest-time">08:00</span>
+            </div>
             <ul class="mini-list" id="outbox-list"></ul>
           </div>
         </aside>
       </div>
+    </section>
+
+    <!-- DIAGNOSTICA (amministratore) -->
+    <section class="view" id="view-admin" hidden>
+      <div class="page-head">
+        <div>
+          <h1 class="page-title">Diagnostica</h1>
+          <p class="page-sub">Stato del server, email recenti ed errori. Accesso in sola lettura.</p>
+        </div>
+        <div class="page-actions">
+          <button class="btn btn--ghost btn--sm" id="btn-refresh-diagnostics" type="button">Aggiorna</button>
+        </div>
+      </div>
+      <div id="diagnostics" class="stack"></div>
     </section>
   </main>
 
@@ -434,6 +456,6 @@
 
 <div class="toasts" id="toasts" aria-live="polite" aria-atomic="false"></div>
 
-<script src="/app.js?v=20261023a"></script>
+<script src="/app.js?v=20261023i"></script>
 </body>
 </html>

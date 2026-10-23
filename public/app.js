@@ -8,6 +8,21 @@
   const WEEKDAYS = ["domenica", "lunedì", "martedì", "mercoledì", "giovedì", "venerdì", "sabato"];
   const WEEKDAYS_SHORT = ["dom", "lun", "mar", "mer", "gio", "ven", "sab"];
   const DOW = ["lun", "mar", "mer", "gio", "ven", "sab", "dom"];
+  // Festività nazionali italiane: nel calendario hanno lo stesso rosso delle
+  // domeniche. Restano fuori le festività del santo patrono locale (cambiano da
+  // città a città) e la domenica di Pasqua, che è già domenica.
+  const HOLIDAYS = {
+    "01-01": "Capodanno",
+    "01-06": "Epifania",
+    "04-25": "Festa della Liberazione",
+    "05-01": "Festa dei Lavoratori",
+    "06-02": "Festa della Repubblica",
+    "08-15": "Ferragosto",
+    "11-01": "Ognissanti",
+    "12-08": "Immacolata Concezione",
+    "12-25": "Natale",
+    "12-26": "Santo Stefano",
+  };
   // Fallback: il server invia la palette in /api/config e /api/users.
   const PALETTE = ["#2f7d63", "#3b6fd4", "#b56a2a", "#7a59c4", "#b0466b", "#2b8a9c",
     "#8a7a20", "#5c6b76", "#a4483f", "#3f7fa8", "#6b8f2a", "#8f5f8f"];
@@ -22,6 +37,7 @@
     month: startOfMonth(new Date()),
     selected: new Set(),
     events: [],
+    birthdays: [],
     requests: [],
     pending: [],
     history: [],
@@ -51,6 +67,31 @@
     return new Date(y, (m || 1) - 1, d || 1);
   }
   function addDays(d, n) { const c = new Date(d); c.setDate(c.getDate() + n); return c; }
+
+  // Lunedì dell'Angelo: l'unica festività nazionale con data mobile.
+  const easterCache = new Map();
+  function easterMonday(year) {
+    if (easterCache.has(year)) return easterCache.get(year);
+    const a = year % 19, b = Math.floor(year / 100), c = year % 100;
+    const d = Math.floor(b / 4), e = b % 4;
+    const f = Math.floor((b + 8) / 25), g = Math.floor((b - f + 1) / 3);
+    const h = (19 * a + b - d - g + 15) % 30;
+    const i = Math.floor(c / 4), k = c % 4;
+    const l = (32 + 2 * e + 2 * i - h - k) % 7;
+    const m = Math.floor((a + 11 * h + 22 * l) / 451);
+    const month = Math.floor((h + l - 7 * m + 114) / 31);
+    const day = ((h + l - 7 * m + 114) % 31) + 1;
+    const monday = addDays(new Date(year, month - 1, day), 1);
+    easterCache.set(year, monday);
+    return monday;
+  }
+
+  function holidayName(d) {
+    const fixed = HOLIDAYS[`${pad(d.getMonth() + 1)}-${pad(d.getDate())}`];
+    if (fixed) return fixed;
+    const monday = easterMonday(d.getFullYear());
+    return iso(monday) === iso(d) ? "Lunedì dell'Angelo" : "";
+  }
   function startOfMonth(d) { return new Date(d.getFullYear(), d.getMonth(), 1); }
   function endOfMonth(d) { return new Date(d.getFullYear(), d.getMonth() + 1, 0); }
   function daysInMonth(d) { return new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate(); }
@@ -449,20 +490,30 @@
     $("#login-screen").hidden = true;
     $("#app-screen").hidden = false;
     applyBrand();
+    const roleLabel = ROLE_LABELS[user.role] || cap(user.role);
     $("#user-name").textContent = user.name;
-    $("#user-role").textContent = user.role;
-    $("#btn-user").setAttribute("aria-label", `Menu utente di ${user.name}, ${cap(user.role)}`);
+    $("#user-role").textContent = roleLabel;
+    $("#btn-user").setAttribute("aria-label", `Menu utente di ${user.name}, ${roleLabel}`);
     paintAvatar($("#user-avatar"), user, user.name);
     $("#user-menu-email").textContent = user.email;
     const isCoord = user.role === "coordinatore";
+    const isAdmin = !!(user.admin || user.role === "admin");
+    // Un account "admin" è solo diagnostica: niente calendario né richieste.
+    // Chi è promosso da ADMIN_EMAILS tiene invece il proprio ruolo e le sue sezioni.
+    const adminOnly = user.role === "admin";
     $("#tab-coord").hidden = !isCoord;
     $("#coord-quick").hidden = !isCoord;
+    $("#tab-admin").hidden = !isAdmin;
+    $("#tab-calendar").hidden = adminOnly;
+    $("#tab-requests").hidden = adminOnly;
+    $("#btn-help").hidden = adminOnly;
+    $("#btn-tour").hidden = adminOnly;
     $("#btn-profile").hidden = false;
     applyRoleTypes(user);
     refreshPushLabel();
     const ics = state.config?.ics_url || "/calendar.ics";
     $("#ics-link").href = ics;
-    switchView("calendar");
+    switchView(adminOnly ? "admin" : "calendar");
   }
 
   /* ------------------------------ viste ------------------------------ */
@@ -485,6 +536,7 @@
     $("#user-menu").hidden = true;
     if (view === "requests") loadRequests();
     if (view === "coord") loadCoord();
+    if (view === "admin") loadDiagnostics();
     renderSelectionBar();
     window.scrollTo({ top: 0, behavior: state.tour.active || reducedMotion() ? "auto" : "smooth" });
   }
@@ -604,7 +656,7 @@
   }
 
   function startTour() {
-    if (!state.me || state.tour.active) return;
+    if (!state.me || state.tour.active || state.me.role === "admin") return;
     state.tour.lastFocus = document.activeElement;
     state.tour.steps = buildTourSteps(state.me);
     state.tour.index = 0;
@@ -786,7 +838,7 @@
   }
 
   function maybeStartTour(user) {
-    if (!user || hasSeenTour(user)) return;
+    if (!user || user.role === "admin" || hasSeenTour(user)) return;
     window.setTimeout(() => {
       if (!state.me || state.me.id !== user.id || state.tour.active) return;
       if (!$("#modal").hidden) return;
@@ -849,6 +901,7 @@
     try {
       const data = await api(`/api/calendar?from=${from}&to=${to}`);
       state.events = data.events;
+      state.birthdays = data.birthdays || [];
       state.people = data.people;
       populatePeople();
       renderCalendar();
@@ -887,6 +940,13 @@
       });
     });
 
+    const birthdaysByDay = new Map();
+    (state.birthdays || []).forEach((entry) => {
+      if (state.personFilter && entry.user_id !== state.personFilter) return;
+      if (!birthdaysByDay.has(entry.date)) birthdaysByDay.set(entry.date, []);
+      birthdaysByDay.get(entry.date).push(entry);
+    });
+
     $("#cal-title").textContent = `${cap(MONTHS[monthIndex])} ${state.month.getFullYear()}`;
 
     const parts = [];
@@ -904,6 +964,13 @@
       const isPast = key < todayIso;
       const isToday = key === todayIso;
       const weekend = d.getDay() === 0 || d.getDay() === 6;
+      const holiday = holidayName(d);
+      const birthdays = birthdaysByDay.get(key) || [];
+      const birthdayNames = birthdays.map((entry) => entry.user_name).join(", ");
+      const birthdayTitle = birthdays.length
+        ? `${birthdays.length === 1 ? "Compleanno" : "Compleanni"} di ${birthdayNames}`
+        : "";
+      const cellTitle = [holiday, birthdayTitle].filter(Boolean).join(" · ");
       const events = (byDay.get(key) || []).slice().sort((a, b) => {
         const order = { ferie: 0, permesso: 1, disponibilita: 2 };
         if (order[a.type] !== order[b.type]) return (order[a.type] || 0) - (order[b.type] || 0);
@@ -916,6 +983,8 @@
       if (!inMonth) cls += " cal-day--outside";
       if (weekend) cls += " cal-day--weekend";
       if (d.getDay() === 0) cls += " cal-day--sunday";
+      if (holiday) cls += " cal-day--holiday";
+      if (birthdays.length) cls += " cal-day--birthday";
       if (isPast) cls += " cal-day--past";
       if (isToday) cls += " cal-day--today";
       if (selected) cls += " cal-day--selected";
@@ -937,8 +1006,13 @@
       }).join("");
 
       parts.push(`<div class="${cls}" data-day="${key}" role="gridcell" tabindex="0"
-          aria-selected="${selected}" aria-label="${esc(fmtLong(key))}">
-        <span class="cal-num">${d.getDate()}</span>
+          aria-selected="${selected}"
+          aria-label="${esc(fmtLong(key))}${cellTitle ? " · " + esc(cellTitle) : ""}"
+          ${cellTitle ? `title="${esc(cellTitle)}"` : ""}>
+        <span class="cal-head">
+          <span class="cal-num">${d.getDate()}</span>
+          ${birthdays.length ? '<span class="cal-bday" aria-hidden="true">🎂</span>' : ""}
+        </span>
         <span class="chips">${chips}${extra > 0 ? `<span class="chip chip--more">+${extra}</span>` : ""}</span>
       </div>`);
     }
@@ -1096,10 +1170,27 @@
 
   function openDayDetail(key) {
     const events = state.events.filter((ev) => (ev.dates || []).includes(key));
-    if (!events.length) {
+    const birthdays = (state.birthdays || []).filter((entry) => entry.date === key
+      && (!state.personFilter || entry.user_id === state.personFilter));
+    if (!events.length && !birthdays.length) {
       toast("Nessun evento registrato in questo giorno.");
       return;
     }
+    const bdayItems = birthdays.map((entry) => {
+      const profile = (state.people || []).find((p) => p.id === entry.user_id) || {};
+      return `
+      <div class="day-detail-item">
+        ${userAvatar({ name: entry.user_name, color: entry.user_color, avatar: profile.avatar,
+          initials: initials(entry.user_name) }, "mini-avatar")}
+        <div>
+          <div class="day-detail-name">${esc(entry.user_name)}</div>
+          <div class="day-detail-meta">Compleanno</div>
+        </div>
+      </div>`;
+    }).join("");
+    const counted = [];
+    if (events.length) counted.push(events.length === 1 ? "1 evento" : `${events.length} eventi`);
+    if (birthdays.length) counted.push(birthdays.length === 1 ? "1 compleanno" : `${birthdays.length} compleanni`);
     const items = events.map((ev) => `
       <div class="day-detail-item">
         ${eventAvatar(ev)}
@@ -1110,7 +1201,7 @@
           ${ev.note ? `<div class="day-detail-meta">“${esc(ev.note)}”</div>` : ""}
         </div>
       </div>`).join("");
-    openModal(`<h3>${esc(fmtLong(key))}</h3><p class="modal-sub">${events.length} ${events.length === 1 ? "evento" : "eventi"} nel calendario</p>${items}`);
+    openModal(`<h3>${esc(fmtLong(key))}</h3><p class="modal-sub">${counted.join(" e ")} nel calendario</p>${items}${bdayItems}`);
   }
 
   /* ------------------------------ richieste ------------------------------ */
@@ -1275,7 +1366,8 @@
 
   /* ------------------------------ coordinamento ------------------------------ */
 
-  const ROLE_LABELS = { dipendente: "Dipendente", professionista: "Professionista", coordinatore: "Coordinatore" };
+  const ROLE_LABELS = { dipendente: "Dipendente", professionista: "Professionista",
+    coordinatore: "Coordinatore", admin: "Amministratore" };
 
   async function loadCoord() {
     if (!state.me || state.me.role !== "coordinatore") return;
@@ -1465,7 +1557,9 @@
             <option value="dipendente">Dipendente</option>
             <option value="professionista">Professionista</option>
             <option value="coordinatore">Coordinatore</option>
+            <option value="admin">Amministratore (diagnostica)</option>
           </select></label>
+        <p class="field-hint">L'amministratore vede log, email ed errori in sola lettura: non approva richieste e non crea accessi.</p>
         <div class="appearance-row">
           <span id="new-user-avatar"></span>
           <div class="appearance-actions">
@@ -1663,8 +1757,8 @@
       state.me = user;
       paintAvatar($("#user-avatar"), user, user.name);
       $("#user-name").textContent = user.name;
-      $("#user-role").textContent = user.role;
-      $("#btn-user").setAttribute("aria-label", `Menu utente di ${user.name}, ${cap(user.role)}`);
+      $("#user-role").textContent = ROLE_LABELS[user.role] || cap(user.role);
+      $("#btn-user").setAttribute("aria-label", `Menu utente di ${user.name}, ${ROLE_LABELS[user.role] || cap(user.role)}`);
     }
     const patch = (item) => item && item.id === user.id ? user : item;
     state.people = (state.people || []).map(patch);
@@ -1796,7 +1890,13 @@
           <input id="profile-name" type="text" maxlength="80" autocomplete="name" value="${esc(state.me.name)}" required></label>
         <label class="field"><span>Email</span>
           <input id="profile-email" type="email" maxlength="120" autocomplete="email" value="${esc(state.me.email)}" required></label>
-        <p class="field-hint">Il PIN non cambia. Dalla prossima volta accedi con la nuova email.</p>
+        <div class="field"><span>Compleanno <em>(facoltativo)</em></span>
+          <div class="birthday-row">
+            <select id="profile-birthday-day" aria-label="Giorno del compleanno"></select>
+            <select id="profile-birthday-month" aria-label="Mese del compleanno"></select>
+          </div>
+        </div>
+        <p class="field-hint">Il giorno del compleanno compare sul calendario condiviso con la torta. Chiediamo solo giorno e mese: l'anno non viene salvato. Il PIN non cambia; dalla prossima volta accedi con la nuova email.</p>
         <p class="form-error" id="profile-error" hidden></p>
         <div class="modal-actions">
           <button class="btn btn--ghost btn--sm" type="button" data-close-modal>Annulla</button>
@@ -1820,10 +1920,20 @@
           error.hidden = false;
           return;
         }
+        const month = monthSelect.value ? Number(monthSelect.value) : 0;
+        const day = daySelect.value ? Number(daySelect.value) : 0;
+        if ((month && !day) || (!month && day)) {
+          error.textContent = "Indica sia il giorno sia il mese, oppure lascia vuoto il compleanno.";
+          error.hidden = false;
+          return;
+        }
+        const birthday = month && day
+          ? `${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`
+          : "";
         submit.disabled = true;
         submit.textContent = "Salvo…";
         try {
-          const data = await api("/api/profile", { method: "POST", body: { name, email } });
+          const data = await api("/api/profile", { method: "POST", body: { name, email, birthday } });
           applyUser(data.user);
           $("#user-menu-email").textContent = data.user.email;
           closeModal();
@@ -1840,6 +1950,32 @@
           submit.textContent = "Salva";
         }
       });
+
+      const daySelect = $("#profile-birthday-day", root);
+      const monthSelect = $("#profile-birthday-month", root);
+      const daysInMonthForBirthday = (index) => [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][index];
+      const fillBirthdayDays = (selectedDay) => {
+        const month = Number(monthSelect.value);
+        const limit = month ? daysInMonthForBirthday(month - 1) : 31;
+        const keep = selectedDay != null ? selectedDay : Number(daySelect.value) || 0;
+        daySelect.innerHTML = '<option value="">Giorno</option>' +
+          Array.from({ length: limit }, (_, i) => `<option value="${i + 1}">${i + 1}</option>`).join("");
+        // Senza mese (compleanno non indicato) il giorno si azzera, così il
+        // campo si può svuotare davvero.
+        daySelect.value = month && keep && keep <= limit ? String(keep) : "";
+        daySelect.disabled = !month;
+      };
+      monthSelect.innerHTML = '<option value="">Non indicato</option>' +
+        MONTHS.map((name, i) => `<option value="${i + 1}">${cap(name)}</option>`).join("");
+      const savedBirthday = (state.me.birthday || "").split("-").map(Number);
+      if (savedBirthday.length === 2 && savedBirthday[0]) {
+        monthSelect.value = String(savedBirthday[0]);
+        fillBirthdayDays(savedBirthday[1]);
+        daySelect.value = String(savedBirthday[1]);
+      } else {
+        fillBirthdayDays();
+      }
+      monthSelect.addEventListener("change", () => fillBirthdayDays());
     });
   }
 
@@ -1895,7 +2031,29 @@
       $("#outbox-hint").textContent = configured
         ? "Registro delle ultime email inviate dall'app."
         : "Le email sono salvate qui perché non è configurato un servizio di invio.";
+      const digest = state.config?.weekly_digest;
       $("#btn-test-email").hidden = !configured;
+      const digestButton = $("#btn-weekly-digest");
+      if (digestButton) {
+        digestButton.hidden = !configured;
+        digestButton.title = digest?.enabled
+          ? `Riepilogo automatico ogni ${digest.weekday_label} dalle ${String(digest.hour).padStart(2, "0")}:00. Tocca per inviarlo subito.`
+          : "Riepilogo delle assenze approvate per la settimana prossima.";
+      }
+      const digestSettings = $("#digest-settings");
+      const digestWeekday = $("#digest-weekday");
+      if (digestSettings && digestWeekday) {
+        const available = configured && !!digest?.enabled;
+        digestSettings.hidden = !available;
+        if (available) {
+          if (!digestWeekday.options.length) {
+            digestWeekday.innerHTML = WEEKDAYS.slice(1).concat(WEEKDAYS[0])
+              .map((name, index) => `<option value="${index}">${cap(name)}</option>`).join("");
+          }
+          digestWeekday.value = String(digest.weekday);
+          $("#digest-time").textContent = `${String(digest.hour).padStart(2, "0")}:00`;
+        }
+      }
       const badge = $("#outbox-badge");
       if (badge) {
         badge.textContent = configured ? "live" : "demo";
@@ -1915,6 +2073,136 @@
           ${mail.error ? `<div class="outbox-error"><span>${esc(mail.error)}</span><button class="btn btn--ghost btn--xs" type="button" data-resend="${esc(mail.id)}">Reinvia</button></div>` : ""}
         </li>`).join("");
     } catch (_) { /* sezione facoltativa */ }
+  }
+
+  /* ------------------------------ diagnostica ------------------------------ */
+
+  const REQUEST_STATUS_LABELS = { pending: "in attesa", approved: "approvate",
+    rejected: "rifiutate", cancelled: "annullate" };
+
+  function formatBytes(bytes) {
+    const value = Number(bytes) || 0;
+    if (value < 1024) return `${value} B`;
+    if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+    return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
+  function formatUptime(seconds) {
+    const total = Math.max(0, Math.round(Number(seconds) || 0));
+    const days = Math.floor(total / 86400);
+    const hours = Math.floor((total % 86400) / 3600);
+    const minutes = Math.floor((total % 3600) / 60);
+    if (days) return `${days} g ${hours} h`;
+    if (hours) return `${hours} h ${minutes} min`;
+    return `${minutes} min`;
+  }
+
+  function formatMoment(value) {
+    if (!value) return "—";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return String(value);
+    return date.toLocaleString("it-IT", { day: "2-digit", month: "short", year: "numeric",
+      hour: "2-digit", minute: "2-digit" });
+  }
+
+  function diagnosticRows(rows) {
+    return `<table class="diag-table">${rows.map(([label, value]) =>
+      `<tr><th>${esc(label)}</th><td>${value === null || value === undefined || value === ""
+        ? "—" : esc(String(value))}</td></tr>`).join("")}</table>`;
+  }
+
+  function diagnosticCard(title, body) {
+    return `<div class="card diag-card"><div class="diag-head"><h3>${esc(title)}</h3></div>${body}</div>`;
+  }
+
+  function renderDiagnostics(data) {
+    const server = data.server || {};
+    const storage = data.storage || {};
+    const counts = data.counts || {};
+    const email = data.email || {};
+    const push = data.push || {};
+    const digest = email.weekly_digest || {};
+    const statuses = Object.entries(counts.requests_by_status || {})
+      .map(([key, value]) => `${REQUEST_STATUS_LABELS[key] || key} ${value}`).join(" · ");
+
+    const serverCard = diagnosticCard("Stato del server", diagnosticRows([
+      ["Organizzazione", server.org],
+      ["Ora del server", formatMoment(server.local_time)],
+      ["Fuso orario", server.timezone],
+      ["Avviato", formatMoment(server.started_at)],
+      ["Attivo da", formatUptime(server.uptime_seconds)],
+      ["Python", server.python],
+      ["Processo", server.pid],
+      ["URL pubblico", server.base_url],
+    ]));
+
+    const storageCard = diagnosticCard("Dati sul disco", diagnosticRows([
+      ["Cartella", storage.data_dir],
+      ["Database", storage.database],
+      ["Dimensione", formatBytes(storage.database_bytes)],
+      ["Ultima modifica", formatMoment(storage.database_modified)],
+      ["Utenti", counts.users],
+      ["Coordinatori", counts.coordinators],
+      ["Richieste", counts.requests],
+      ["Per stato", statuses],
+      ["Email nel registro", counts.outbox],
+      ["Allegati avatar", storage.avatar_files],
+      ["File email su disco", storage.outbox_files],
+    ]));
+
+    const emailCard = diagnosticCard("Email e notifiche", diagnosticRows([
+      ["Servizio", email.configured ? email.provider : "non configurato (modalità simulata)"],
+      ["Mittente", email.from],
+      ["Nome mittente", email.from_name],
+      ["Reply-To", email.reply_to],
+      ["Promemoria", email.reminder_hours ? `dopo ${email.reminder_hours} ore` : "disattivato"],
+      ["Riepilogo", digest.enabled
+        ? `ogni ${digest.weekday_label} alle ${String(digest.hour).padStart(2, "0")}:00`
+        : "disattivato"],
+      ["Ultimo riepilogo", digest.last_sent_at
+        ? `${formatMoment(digest.last_sent_at)} · settimana del ${digest.last_week}`
+        : "mai inviato"],
+      ["Notifiche push", push.vapid
+        ? `chiavi presenti · ${push.subscriptions} dispositivi`
+        : "chiavi non ancora generate"],
+    ]));
+
+    const errors = data.errors || [];
+    const errorsCard = diagnosticCard("Errori recenti", errors.length
+      ? `<ul class="diag-lines">${errors.slice().reverse().map((entry) =>
+          `<li class="diag-line diag-line--error"><time>${esc(entry.clock)}</time><span>${esc(entry.message)}</span></li>`).join("")}</ul>`
+      : '<p class="diag-empty">Nessun errore registrato da quando il server è avviato.</p>');
+
+    const mails = data.outbox_recent || [];
+    const mailsCard = diagnosticCard("Ultime email", mails.length
+      ? `<ul class="diag-mails">${mails.map((mail) => `
+          <li><a href="/api/outbox/${esc(mail.id)}" target="_blank" rel="noopener">
+            <span class="diag-mail-subject">${esc(mail.subject)}</span>
+            <span class="diag-mail-meta">a ${esc(mail.to)} · ${esc(formatMoment(mail.created_at))}${mail.provider ? " · " + esc(mail.provider) : ""}</span>
+            ${mail.error ? `<span class="diag-mail-error">${esc(mail.error)}</span>` : ""}
+          </a></li>`).join("")}</ul>`
+      : '<p class="diag-empty">Nessuna email generata.</p>');
+
+    const logs = (data.logs || []).slice().reverse();
+    const logsCard = diagnosticCard("Log del server", logs.length
+      ? `<div class="diag-console">${logs.map((entry) =>
+          `<div class="diag-line${entry.level === "error" ? " diag-line--error" : ""}"><time>${esc(entry.clock)}</time><span>${esc(entry.message)}</span></div>`).join("")}</div>`
+      : '<p class="diag-empty">Nessuna riga di log registrata.</p>');
+
+    return `<div class="diag-grid">${serverCard}${storageCard}${emailCard}</div>${errorsCard}${mailsCard}${logsCard}`;
+  }
+
+  async function loadDiagnostics() {
+    const box = $("#diagnostics");
+    if (!box) return;
+    box.innerHTML = '<div class="card diag-card"><p class="diag-empty">Raccolgo i dati…</p></div>';
+    try {
+      const data = await api("/api/admin/diagnostics");
+      box.innerHTML = renderDiagnostics(data);
+    } catch (error) {
+      if (error.status === 401) return handleExpired();
+      box.innerHTML = `<div class="card diag-card"><p class="diag-empty">${esc(error.message)}</p></div>`;
+    }
   }
 
   /* ------------------------------ notifiche ------------------------------ */
@@ -2414,6 +2702,51 @@
       personSelect.addEventListener("change", () => {
         state.personFilter = personSelect.value;
         renderCalendar();
+      });
+    }
+
+    const refreshDiagnostics = $("#btn-refresh-diagnostics");
+    if (refreshDiagnostics) refreshDiagnostics.addEventListener("click", loadDiagnostics);
+
+    const digestWeekday = $("#digest-weekday");
+    if (digestWeekday) {
+      digestWeekday.addEventListener("change", async () => {
+        const weekday = Number(digestWeekday.value);
+        digestWeekday.disabled = true;
+        try {
+          const data = await api("/api/weekly-digest/settings", { method: "POST", body: { weekday } });
+          if (state.config) state.config.weekly_digest = data.weekly_digest;
+          toast(`Riepilogo settimanale: ogni ${data.weekly_digest.weekday_label}.`, "success");
+        } catch (error) {
+          toast(error.message, "error");
+        } finally {
+          digestWeekday.disabled = false;
+          loadOutbox();
+        }
+      });
+    }
+
+    const digestButton = $("#btn-weekly-digest");
+    if (digestButton) {
+      digestButton.addEventListener("click", async () => {
+        digestButton.disabled = true;
+        const label = digestButton.textContent;
+        digestButton.textContent = "Invio in corso…";
+        try {
+          const result = await api("/api/weekly-digest", { method: "POST", body: {} });
+          const count = result.sent || 0;
+          if (result.warning) {
+            toast(`Riepilogo inviato con errori: ${result.warning}`, "error");
+          } else {
+            toast(`Riepilogo inviato a ${count} ${count === 1 ? "coordinatore" : "coordinatori"}.`, "success");
+          }
+          loadOutbox();
+        } catch (error) {
+          toast(error.message, "error");
+        } finally {
+          digestButton.disabled = false;
+          digestButton.textContent = label;
+        }
       });
     }
 

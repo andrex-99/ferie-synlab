@@ -17,6 +17,7 @@ Configurazione tramite variabili d'ambiente o file .env (vedi README.md).
 import argparse
 import base64
 import binascii
+import collections
 import hashlib
 import hmac
 import html
@@ -54,7 +55,8 @@ AGENDA = {
 ROLE_EMPLOYEE = "dipendente"
 ROLE_FREELANCE = "professionista"
 ROLE_COORD = "coordinatore"
-ROLES = (ROLE_EMPLOYEE, ROLE_FREELANCE, ROLE_COORD)
+ROLE_ADMIN = "admin"
+ROLES = (ROLE_EMPLOYEE, ROLE_FREELANCE, ROLE_COORD, ROLE_ADMIN)
 COLORS = [
     "#2f7d63", "#3b6fd4", "#b56a2a", "#7a59c4", "#b0466b", "#2b8a9c",
     "#8a7a20", "#5c6b76", "#a4483f", "#3f7fa8", "#6b8f2a", "#8f5f8f",
@@ -158,14 +160,39 @@ SMTP_USER = os.environ.get("SMTP_USER", "").strip()
 SMTP_PASS = os.environ.get("SMTP_PASS", "")
 SMTP_STARTTLS = os.environ.get("SMTP_STARTTLS", "1") not in ("0", "false", "no")
 COORDINATOR_EMAILS = [e.strip().lower() for e in os.environ.get("COORDINATOR_EMAILS", "").split(",") if e.strip()]
+# Account che vedono la diagnostica (log, email, errori) senza poteri da
+# coordinatore: utenti con ruolo admin oppure email elencate qui.
+ADMIN_EMAILS = [e.strip().lower() for e in os.environ.get("ADMIN_EMAILS", "").split(",") if e.strip()]
 MAX_SESSION_DAYS = 30
 REMINDER_HOURS = int(os.environ.get("REMINDER_HOURS", "24") or 0)
+
+# Riepilogo settimanale delle assenze ai coordinatori.
+# 0 = lunedì, 1 = martedì, 2 = mercoledì, 3 = giovedì, ... 6 = domenica.
+WEEKLY_DIGEST = os.environ.get("WEEKLY_DIGEST", "1") not in ("0", "false", "no")
+WEEKLY_DIGEST_WEEKDAY = int(os.environ.get("WEEKLY_DIGEST_WEEKDAY", "3") or 0)
+WEEKLY_DIGEST_HOUR = int(os.environ.get("WEEKLY_DIGEST_HOUR", "8") or 0)
+WEEKLY_DIGEST_WEEKDAY = min(max(WEEKLY_DIGEST_WEEKDAY, 0), 6)
+WEEKLY_DIGEST_HOUR = min(max(WEEKLY_DIGEST_HOUR, 0), 23)
+
+# Fuso orario usato per decidere quando parte il riepilogo: il server in
+# container gira in UTC, il team ragiona in ora italiana.
+ORG_TZ = os.environ.get("TZ", "Europe/Rome").strip() or "Europe/Rome"
+
 # Contatto richiesto da VAPID nelle notifiche push (mailto: o https:).
 VAPID_SUBJECT = os.environ.get("VAPID_SUBJECT", "").strip()
 
 
 def email_configured():
     return bool(RESEND_API_KEY and MAIL_FROM) or bool(SMTP_HOST and MAIL_FROM)
+
+
+def local_now():
+    """Ora locale dell'organizzazione: TZ se disponibile, altrimenti ora di sistema."""
+    try:
+        from zoneinfo import ZoneInfo
+        return datetime.now(ZoneInfo(ORG_TZ))
+    except Exception:
+        return datetime.now()
 
 
 # --------------------------------------------------------------------------
@@ -236,7 +263,7 @@ def new_id(prefix=""):
 
 def blank_db():
     return {"users": [], "requests": [], "outbox": [], "push": [], "seeded": True,
-            "created_at": now_iso()}
+            "meta": {}, "created_at": now_iso()}
 
 
 def load_db():
@@ -256,6 +283,7 @@ def load_db():
         db.setdefault("outbox", [])
         db.setdefault("push", [])
         db.setdefault("seeded", False)
+        db.setdefault("meta", {})
         return db
 
 
@@ -318,14 +346,24 @@ def is_coordinator(user):
     return bool(user) and (user.get("role") == ROLE_COORD or user.get("email", "").lower() in COORDINATOR_EMAILS)
 
 
+def is_admin(user):
+    """Amministratore di diagnostica: legge log ed email, non approva nulla."""
+    return bool(user) and (user.get("role") == ROLE_ADMIN
+                           or user.get("email", "").lower() in ADMIN_EMAILS)
+
+
 def allowed_types(user):
     """Tipi di richiesta ammessi per ruolo.
 
     I professionisti comunicano solo la disponibilità, i dipendenti chiedono
     ferie e permessi. Il coordinatore chiede ferie e permessi come i dipendenti:
     la disponibilità riguarda solo chi lavora su turni o a chiamata.
+    L'amministratore è un account tecnico: vede la diagnostica e non invia
+    richieste.
     """
     role = (user or {}).get("role")
+    if role == ROLE_ADMIN:
+        return []
     if role == ROLE_FREELANCE:
         return ["disponibilita"]
     return ["ferie", "permesso"]
@@ -343,6 +381,8 @@ def public_user(user):
         "email": user["email"],
         "role": user["role"],
         "color": user.get("color") or COLORS[0],
+        "birthday": user.get("birthday"),
+        "admin": is_admin(user),
         "avatar": avatar_url(user),
         "initials": "".join(part[0] for part in user["name"].split()[:2]).upper(),
     }
@@ -439,6 +479,46 @@ def parse_day(value):
 def fmt_day(value):
     return "%s %d %s %d" % (AGENDA["giorni"][value.weekday()], value.day,
                             AGENDA["mesi"][value.month - 1], value.year)
+
+
+def normalize_birthday(value):
+    """Compleanno come MM-DD: l'anno non serve e non viene conservato."""
+    match = re.match(r"^(\d{1,2})-(\d{1,2})$", str(value or "").strip())
+    if not match:
+        return None
+    month, day = int(match.group(1)), int(match.group(2))
+    try:
+        date(2000, month, day)  # il 2000 è bisestile: il 29 febbraio è valido
+    except ValueError:
+        return None
+    return "%02d-%02d" % (month, day)
+
+
+def birthday_on(year, birthday):
+    """Il compleanno in un dato anno; il 29 febbraio cade il 28 negli anni non bisestili."""
+    month, day = (int(part) for part in birthday.split("-"))
+    try:
+        return date(year, month, day)
+    except ValueError:
+        return date(year, 2, 28)
+
+
+def birthdays_in_range(db, start, end):
+    """Compleanni (solo giorno e mese) che cadono nel periodo mostrato."""
+    found = []
+    for user in db.get("users", []):
+        birthday = normalize_birthday(user.get("birthday"))
+        if not birthday:
+            continue
+        for year in {start.year, end.year}:
+            day = birthday_on(year, birthday)
+            if start <= day <= end:
+                found.append({"date": iso_day(day), "user_id": user["id"],
+                              "user_name": user["name"],
+                              "user_color": user.get("color") or COLORS[0],
+                              "day_month": birthday})
+    found.sort(key=lambda item: (item["date"], item["user_name"].casefold()))
+    return found
 
 
 def fmt_range(start, end):
@@ -1048,6 +1128,201 @@ def reminder_email(requester, req, decide_url, app_url, hours):
     return subject, page, text
 
 
+def next_week_bounds(today=None):
+    """Lunedì e domenica della settimana successiva."""
+    today = today or local_now().date()
+    monday = today + timedelta(days=7 - today.weekday())
+    return monday, monday + timedelta(days=6)
+
+
+def digest_period_label(start, end):
+    if start.year == end.year and start.month == end.month:
+        return "%d–%d %s %d" % (start.day, end.day, AGENDA["mesi"][start.month - 1], start.year)
+    return "%d %s – %d %s %d" % (start.day, AGENDA["mesi"][start.month - 1],
+                                 end.day, AGENDA["mesi"][end.month - 1], end.year)
+
+
+def weekly_absences(db, start, end):
+    """Assenze approvate (ferie e permessi) dei giorni indicati, raggruppate per giorno."""
+    grouped = {}
+    for req in db.get("requests", []):
+        if req.get("status") != "approved" or req.get("type") not in ("ferie", "permesso"):
+            continue
+        requester = find_user(db, uid=req.get("user_id"))
+        if not requester:
+            continue
+        for value in req.get("dates", []):
+            day = parse_day(value)
+            if day and start <= day <= end:
+                grouped.setdefault(day, {}).setdefault(requester["id"], (requester, req))
+    rows = []
+    for day in sorted(grouped):
+        entries = sorted(grouped[day].values(), key=lambda pair: pair[0].get("name", "").casefold())
+        rows.append({"day": day, "entries": entries})
+    return rows
+
+
+def weekly_digest_email(rows, start, end, app_url):
+    """Riepilogo leggibile: un blocco per giorno con chi manca e perché."""
+    total = sum(len(row["entries"]) for row in rows)
+    people = {}
+    for row in rows:
+        for requester, _req in row["entries"]:
+            people[requester["name"]] = people.get(requester["name"], 0) + 1
+    period = digest_period_label(start, end)
+    if total:
+        subject = "%d %s la settimana prossima · %s" % (
+            total, "assenza programmata" if total == 1 else "assenze programmate", period)
+        intro = ('<p style="margin:0 0 16px;">Ecco le assenze già approvate per la settimana '
+                 '<strong>%s</strong>.</p>' % html.escape(fmt_range(start, end)))
+    else:
+        subject = "Settimana prossima senza assenze · %s" % period
+        intro = ('<p style="margin:0 0 16px;">Per la settimana <strong>%s</strong> non ci sono '
+                 'assenze approvate.</p>' % html.escape(fmt_range(start, end)))
+
+    cells = []
+    for row in rows:
+        day = row["day"]
+        day_label = "%s %d %s" % (AGENDA["giorni"][day.weekday()].capitalize(), day.day,
+                                   AGENDA["mesi"][day.month - 1])
+        names = []
+        for requester, req in row["entries"]:
+            what = TYPE_LABELS.get(req.get("type"), "Assenza")
+            if slot_detail(req):
+                what += " · " + slot_detail(req)
+            names.append('<div style="margin:3px 0;"><strong>%s</strong> <span style="color:#7c8178;'
+                         'font-size:13px;">— %s</span></div>'
+                         % (html.escape(requester.get("name", "")), html.escape(what)))
+        border = "border-bottom:1px solid #edf0ea;" if row is not rows[-1] else ""
+        cells.append('<tr><td style="padding:11px 0;%s color:#1b2321;font-size:13px;font-weight:700;'
+                     'width:38%%;vertical-align:top;">%s</td><td style="padding:11px 0;%s '
+                     'color:#3f4a45;font-size:14px;vertical-align:top;">%s</td></tr>'
+                     % (border, html.escape(day_label), border, "".join(names)))
+
+    body = intro
+    if cells:
+        body += ('<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
+                 'style="background:#f5f9fc;border-radius:14px;padding:0;margin:0 0 16px;">'
+                 '<tr><td style="padding:4px 18px;"><table role="presentation" width="100%" '
+                 'cellpadding="0" cellspacing="0" border="0">' + "".join(cells)
+                 + '</table></td></tr></table>')
+    if people:
+        bits = ["%s %d %s" % (name, count, "giorno" if count == 1 else "giorni")
+                for name, count in sorted(people.items(), key=lambda item: item[0].casefold())]
+        body += ('<p style="margin:0 0 20px;font-size:13.5px;color:#5a655e;">In totale: %s.</p>'
+                 % html.escape(", ".join(bits)))
+    body += '<p style="margin:0;">%s</p>' % button(app_url + "/", "Apri il calendario")
+
+    lines = ["Assenze della settimana prossima (%s)" % fmt_range(start, end), ""]
+    if not rows:
+        lines.append("Nessuna assenza approvata.")
+    for row in rows:
+        lines.append("%s %d %s" % (AGENDA["giorni"][row["day"].weekday()], row["day"].day,
+                                     AGENDA["mesi"][row["day"].month - 1]))
+        for requester, req in row["entries"]:
+            what = TYPE_LABELS.get(req.get("type"), "Assenza")
+            if slot_detail(req):
+                what += " (%s)" % slot_detail(req)
+            lines.append("  · %s — %s" % (requester.get("name", ""), what))
+        lines.append("")
+    if people:
+        lines.append("In totale: %s." % ", ".join(
+            "%s %d %s" % (name, count, "giorno" if count == 1 else "giorni")
+            for name, count in sorted(people.items(), key=lambda item: item[0].casefold())))
+    lines.append("Apri il calendario: %s/" % app_url)
+    text = "\n".join(lines)
+
+    page = email_shell("Assenze della settimana prossima", "Riepilogo settimanale", body,
+                       "Riepilogo automatico inviato ai coordinatori.",
+                       preheader=subject, accent="#005f96")
+    return subject, page, text
+
+
+def deliver_weekly_digest(db, when=None, force=False):
+    """Invia il riepilogo ai coordinatori. Non decide se è il momento giusto."""
+    when = when or local_now()
+    start, end = next_week_bounds(when.date())
+    rows = weekly_absences(db, start, end)
+    total = sum(len(row["entries"]) for row in rows)
+    recipients = coordinators(db)
+    result = {"week_start": iso_day(start), "week_end": iso_day(end), "absences": total,
+              "sent": 0, "recipients": [], "subject": "", "errors": [], "skipped": ""}
+    if not rows and not force:
+        result["skipped"] = "nessuna assenza la settimana prossima"
+        return result
+    if not recipients:
+        result["skipped"] = "nessun coordinatore configurato"
+        return result
+    app_url = APP_BASE_URL or "http://localhost:%d" % PORT
+    subject, body, text = weekly_digest_email(rows, start, end, app_url)
+    result["subject"] = subject
+    for coord in recipients:
+        key = new_id("digest-") if force else "digest-%s-%s" % (start.isoformat(), coord["id"])
+        mail = send_mail(coord["email"], subject, body, text, reply_to=MAIL_REPLY_TO or None,
+                         idempotency_key=key)
+        if mail.get("error"):
+            result["errors"].append("%s (%s)" % (coord["email"], mail["error"]))
+            continue
+        result["recipients"].append(coord["email"])
+        result["sent"] += 1
+    return result
+
+
+def weekly_digest_settings(db=None):
+    """Giorno e ora del riepilogo: quelli scelti dal coordinatore, altrimenti dal .env."""
+    db = load_db() if db is None else db
+    weekday = (db.get("meta") or {}).get("weekly_digest_weekday")
+    if not isinstance(weekday, int) or isinstance(weekday, bool) or not 0 <= weekday <= 6:
+        weekday = WEEKLY_DIGEST_WEEKDAY
+    return {"weekday": weekday, "hour": WEEKLY_DIGEST_HOUR}
+
+
+def weekly_digest_due(now=None, db=None):
+    """Vero dal giorno configurato, una sola volta per settimana."""
+    if not (WEEKLY_DIGEST and email_configured()):
+        return False
+    now = now or local_now()
+    db = load_db() if db is None else db
+    settings = weekly_digest_settings(db)
+    if now.weekday() < settings["weekday"]:
+        return False
+    if now.weekday() == settings["weekday"] and now.hour < settings["hour"]:
+        return False
+    sent_week = (db.get("meta") or {}).get("weekly_digest_week")
+    return sent_week != next_week_bounds(now.date())[0].isoformat()
+
+
+def run_weekly_digest(now=None, force=False):
+    """Invia il riepilogo se è il giorno giusto (o subito con force)."""
+    now = now or local_now()
+    if not force and not weekly_digest_due(now):
+        return {"sent": 0, "skipped": "non è il momento del riepilogo", "absences": 0,
+                "recipients": [], "errors": []}
+    result = deliver_weekly_digest(load_db(), now, force=force)
+    if result["sent"]:
+        with DB_LOCK:
+            fresh = load_db()
+            meta = fresh.setdefault("meta", {})
+            meta["weekly_digest_week"] = result["week_start"]
+            meta["weekly_digest_sent_at"] = now_iso()
+            save_db(fresh)
+        log("Riepilogo settimanale inviato a %d coordinatori (%d assenze)"
+            % (result["sent"], result["absences"]))
+    elif result.get("skipped"):
+        log("Riepilogo settimanale non inviato: %s" % result["skipped"])
+    return result
+
+
+def digest_loop(stop_event):
+    while True:
+        try:
+            run_weekly_digest()
+        except Exception as exc:  # pragma: no cover - difensivo
+            log("Riepilogo settimanale non inviato: %r" % exc, error=True)
+        if stop_event.wait(900):
+            break
+
+
 def test_email_html(to):
     body = ('<p style="margin:0 0 18px;">Se stai leggendo questo messaggio, l\'invio email è configurato '
             'correttamente.</p>')
@@ -1076,10 +1351,17 @@ class ApiError(Exception):
 
 LOG_LOCK = threading.Lock()
 
+# Ultime righe di log tenute in memoria per la diagnostica dell'amministratore.
+LOG_BUFFER = collections.deque(maxlen=400)
+STARTED_AT = time.time()
+
 
 def log(message, error=False):
+    stamp = datetime.now().strftime("%H:%M:%S")
+    entry = {"time": datetime.now().isoformat(timespec="seconds"), "clock": stamp,
+             "level": "error" if error else "info", "message": str(message)}
     with LOG_LOCK:
-        stamp = datetime.now().strftime("%H:%M:%S")
+        LOG_BUFFER.append(entry)
         stream = sys.stderr if error else sys.stdout
         stream.write("[%s] %s\n" % (stamp, message))
         stream.flush()
@@ -1164,6 +1446,21 @@ class Handler(BaseHTTPRequestHandler):
         db = db or load_db()
         user = self.require_user(db)
         if not is_coordinator(user):
+            raise ApiError(403, "Questa azione è riservata al coordinatore.")
+        return user
+
+    def require_admin(self, db=None):
+        db = db or load_db()
+        user = self.require_user(db)
+        if not is_admin(user):
+            raise ApiError(403, "Questa sezione è riservata all'amministratore.")
+        return user
+
+    def require_staff(self, db=None):
+        """Lettura di log ed email: coordinatore o amministratore."""
+        db = db or load_db()
+        user = self.require_user(db)
+        if not (is_coordinator(user) or is_admin(user)):
             raise ApiError(403, "Questa azione è riservata al coordinatore.")
         return user
 
@@ -1325,6 +1622,12 @@ class Handler(BaseHTTPRequestHandler):
             return self.api_change_pin()
         if route == "test-email" and method == "POST":
             return self.api_test_email()
+        if route == "weekly-digest" and method == "POST":
+            return self.api_weekly_digest()
+        if route == "weekly-digest/settings" and method == "POST":
+            return self.api_weekly_digest_settings()
+        if route == "admin/diagnostics" and method == "GET":
+            return self.api_admin_diagnostics()
         if route == "users" and method == "GET":
             return self.api_users()
         if route == "users" and method == "POST":
@@ -1368,6 +1671,7 @@ class Handler(BaseHTTPRequestHandler):
         if demo:
             accounts = [{"name": u["name"], "email": u["email"], "role": u["role"],
                          "pin": u.get("demo_pin")} for u in db["users"] if u.get("demo_pin")]
+        digest_settings = weekly_digest_settings(db)
         return {
             "org_name": ORG_NAME,
             "org_short": ORG_SHORT,
@@ -1378,6 +1682,13 @@ class Handler(BaseHTTPRequestHandler):
             "demo_mode": not email_configured(),
             "reminders_enabled": email_configured() and REMINDER_HOURS > 0,
             "reminder_hours": REMINDER_HOURS,
+            "weekly_digest": {
+                "enabled": bool(WEEKLY_DIGEST and email_configured()),
+                "weekday": digest_settings["weekday"],
+                "weekday_label": AGENDA["giorni"][digest_settings["weekday"]],
+                "hour": digest_settings["hour"],
+                "custom_weekday": "weekly_digest_weekday" in (db.get("meta") or {}),
+            },
             "demo_accounts": accounts,
             "ics_url": "/calendar.ics?t=" + ics_feed_token(),
             "roles": list(ROLES),
@@ -1458,6 +1769,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json({
             "me": public_user(user),
             "events": visible,
+            "birthdays": birthdays_in_range(db, start, end),
             "people": people,
             "today": date.today().isoformat(),
             "server_time": now_iso(),
@@ -1486,7 +1798,10 @@ class Handler(BaseHTTPRequestHandler):
         if req_type not in TYPE_LABELS:
             raise ApiError(400, "Il tipo di richiesta non è valido")
         if req_type not in allowed_types(user):
-            labels = " e ".join(TYPE_LABELS[t].lower() for t in allowed_types(user))
+            allowed = allowed_types(user)
+            if not allowed:
+                raise ApiError(403, "Il tuo profilo non può inviare richieste")
+            labels = " e ".join(TYPE_LABELS[t].lower() for t in allowed)
             raise ApiError(403, "Il tuo profilo può inviare solo: " + labels)
         raw_dates = data.get("dates")
         if not isinstance(raw_dates, list) or not raw_dates:
@@ -1775,9 +2090,57 @@ class Handler(BaseHTTPRequestHandler):
             raise ApiError(502, "Invio non riuscito: " + mail["error"])
         self.send_json({"ok": True, "provider": mail.get("provider")})
 
-    def api_outbox(self):
+    def api_weekly_digest(self):
+        """Il coordinatore invia subito il riepilogo, senza aspettare il giorno previsto."""
         db = load_db()
         self.require_coordinator(db)
+        if not email_configured():
+            raise ApiError(400, "Nessun servizio email configurato. Imposta RESEND_API_KEY o SMTP nel file .env e riavvia.")
+        result = run_weekly_digest(force=True)
+        if result.get("errors") and not result.get("sent"):
+            raise ApiError(502, "Invio non riuscito: " + "; ".join(result["errors"]))
+        payload = {"ok": True, "sent": result.get("sent", 0),
+                   "recipients": result.get("recipients", []),
+                   "subject": result.get("subject", ""),
+                   "absences": result.get("absences", 0),
+                   "week_start": result.get("week_start")}
+        if result.get("errors"):
+            payload["warning"] = "; ".join(result["errors"])
+        self.send_json(payload)
+
+    def api_weekly_digest_settings(self):
+        """Il coordinatore sceglie il giorno in cui parte il riepilogo settimanale."""
+        data = self.read_json()
+        try:
+            weekday = int(data.get("weekday"))
+        except (TypeError, ValueError):
+            raise ApiError(400, "Indica un giorno della settimana")
+        if isinstance(data.get("weekday"), bool) or not 0 <= weekday <= 6:
+            raise ApiError(400, "Indica un giorno della settimana")
+        with DB_LOCK:
+            db = load_db()
+            self.require_coordinator(db)
+            db.setdefault("meta", {})["weekly_digest_weekday"] = weekday
+            save_db(db)
+            settings = weekly_digest_settings(db)
+        log("Riepilogo settimanale spostato al %s" % AGENDA["giorni"][weekday])
+        self.send_json({"ok": True, "weekly_digest": {
+            "enabled": bool(WEEKLY_DIGEST and email_configured()),
+            "weekday": settings["weekday"],
+            "weekday_label": AGENDA["giorni"][settings["weekday"]],
+            "hour": settings["hour"],
+            "custom_weekday": True,
+        }})
+
+    def api_admin_diagnostics(self):
+        """Log, email ed errori recenti per l'amministratore (sola lettura)."""
+        db = load_db()
+        self.require_admin(db)
+        self.send_json(diagnostics_snapshot(db))
+
+    def api_outbox(self):
+        db = load_db()
+        self.require_staff(db)
         items = [{"id": m["id"], "to": m["to"], "subject": m["subject"],
                   "created_at": m["created_at"], "error": m.get("error"),
                   "provider": m.get("provider"), "reply_to": m.get("reply_to", ""),
@@ -1787,7 +2150,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def api_outbox_item(self, mid):
         db = load_db()
-        self.require_coordinator(db)
+        self.require_staff(db)
         entry = next((m for m in db["outbox"] if m["id"] == mid), None)
         if not entry:
             raise ApiError(404, "Messaggio non trovato")
@@ -1841,7 +2204,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json({"request": serialized})
 
     def api_update_profile(self):
-        """Nome ed email del proprio account (le credenziali di accesso restano invariate)."""
+        """Nome, email e compleanno del proprio account (le credenziali restano invariate)."""
         data = self.read_json()
         name = clean_text(data.get("name"), 80)
         email = clean_text(data.get("email"), 120).lower()
@@ -1849,6 +2212,11 @@ class Handler(BaseHTTPRequestHandler):
             raise ApiError(400, "Inserisci nome e cognome")
         if not valid_email(email):
             raise ApiError(400, "L'email non è valida")
+        birthday = None
+        if "birthday" in data and str(data.get("birthday") or "").strip():
+            birthday = normalize_birthday(data.get("birthday"))
+            if not birthday:
+                raise ApiError(400, "Il compleanno non è valido: indica giorno e mese")
         with DB_LOCK:
             db = load_db()
             user = self.require_user(db)
@@ -1857,6 +2225,11 @@ class Handler(BaseHTTPRequestHandler):
                 raise ApiError(409, "Esiste già una persona con questa email")
             before = (user.get("name"), user.get("email"))
             user["name"], user["email"] = name, email
+            if "birthday" in data:
+                if birthday:
+                    user["birthday"] = birthday
+                else:
+                    user.pop("birthday", None)
             save_db(db)
             updated = public_user(user)
         if before != (name, email):
@@ -2376,6 +2749,84 @@ def compute_stats(db):
     }
 
 
+def diagnostics_snapshot(db=None):
+    """Fotografia dello stato del server per l'area dell'amministratore."""
+    db = load_db() if db is None else db
+    now = local_now()
+    try:
+        stat = DB_PATH.stat()
+        db_bytes = stat.st_size
+        db_modified = datetime.fromtimestamp(stat.st_mtime, now.tzinfo).isoformat(timespec="seconds")
+    except OSError:
+        db_bytes, db_modified = 0, None
+    with LOG_LOCK:
+        log_entries = list(LOG_BUFFER)
+    statuses = {}
+    for req in db.get("requests", []):
+        status = req.get("status") or "sconosciuto"
+        statuses[status] = statuses.get(status, 0) + 1
+    provider = "resend" if RESEND_API_KEY and MAIL_FROM else (
+        "smtp" if SMTP_HOST and MAIL_FROM else "demo")
+    digest_settings = weekly_digest_settings(db)
+    meta = db.get("meta") or {}
+    outbox = db.get("outbox", [])
+    return {
+        "generated_at": now_iso(),
+        "server": {
+            "org": ORG_NAME,
+            "local_time": now.isoformat(timespec="seconds"),
+            "timezone": ORG_TZ,
+            "started_at": datetime.fromtimestamp(STARTED_AT, now.tzinfo).isoformat(timespec="seconds"),
+            "uptime_seconds": int(time.time() - STARTED_AT),
+            "python": sys.version.split()[0],
+            "pid": os.getpid(),
+            "base_url": APP_BASE_URL or "",
+        },
+        "storage": {
+            "data_dir": str(DATA_DIR),
+            "database": str(DB_PATH),
+            "database_bytes": db_bytes,
+            "database_modified": db_modified,
+            "avatar_files": len(list(AVATAR_DIR.glob("*"))) if AVATAR_DIR.exists() else 0,
+            "outbox_files": len(list(OUTBOX_DIR.glob("*.html"))) if OUTBOX_DIR.exists() else 0,
+        },
+        "counts": {
+            "users": len(db.get("users", [])),
+            "coordinators": len(coordinators(db)),
+            "requests": len(db.get("requests", [])),
+            "requests_by_status": statuses,
+            "outbox": len(outbox),
+            "push_subscriptions": len(db.get("push", [])),
+        },
+        "email": {
+            "configured": email_configured(),
+            "provider": provider,
+            "from": MAIL_FROM,
+            "from_name": MAIL_FROM_NAME,
+            "reply_to": MAIL_REPLY_TO,
+            "reminder_hours": REMINDER_HOURS,
+            "weekly_digest": {
+                "enabled": bool(WEEKLY_DIGEST and email_configured()),
+                "weekday": digest_settings["weekday"],
+                "weekday_label": AGENDA["giorni"][digest_settings["weekday"]],
+                "hour": digest_settings["hour"],
+                "last_week": meta.get("weekly_digest_week"),
+                "last_sent_at": meta.get("weekly_digest_sent_at"),
+            },
+        },
+        "push": {
+            "vapid": VAPID_PATH.exists(),
+            "subscriptions": len(db.get("push", [])),
+            "subject": VAPID_SUBJECT,
+        },
+        "logs": log_entries[-120:],
+        "errors": [entry for entry in log_entries if entry["level"] == "error"][-30:],
+        "outbox_recent": [{"id": m.get("id"), "to": m.get("to"), "subject": m.get("subject"),
+                           "created_at": m.get("created_at"), "provider": m.get("provider"),
+                           "error": m.get("error")} for m in outbox[:20]],
+    }
+
+
 def run_reminders():
     """Invia un solo promemoria per ogni richiesta rimasta in attesa."""
     if not email_configured() or REMINDER_HOURS <= 0:
@@ -2556,6 +3007,13 @@ def serve(args):
         threading.Thread(target=reminder_loop, args=(stop_reminders,), daemon=True,
                          name="promemoria").start()
         print("  Promemoria: dopo %d %s di attesa" % (REMINDER_HOURS, "ora" if REMINDER_HOURS == 1 else "ore"))
+    if WEEKLY_DIGEST and email_configured():
+        stop_digest = threading.Event()
+        digest_settings = weekly_digest_settings()
+        threading.Thread(target=digest_loop, args=(stop_digest,), daemon=True,
+                         name="riepilogo").start()
+        print("  Riepilogo settimanale: %s dalle %02d:00 (%s)"
+              % (AGENDA["giorni"][digest_settings["weekday"]], digest_settings["hour"], ORG_TZ))
     print("  Interrompi con Ctrl+C\n")
     if not args.no_open and HOST in ("127.0.0.1", "localhost"):
         try:
