@@ -48,7 +48,7 @@ Il calendario parte vuoto: le richieste compaiono man mano che le invii. Per rip
 
 [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/andrex-99/ferie-synlab)
 
-Il pulsante crea su [Render](https://render.com) un servizio web gratuito partendo dal [render.yaml](render.yaml) e dal [Dockerfile](Dockerfile) di questo repository: serve un account Render (gratuito, **senza carta**) e l'autorizzazione a leggere il repository GitHub. Da lì il deploy parte da solo; per aggiornarlo dopo un push usa **Manual Deploy → Deploy latest commit** nel pannello Render. La pubblicazione automatica a ogni push funziona solo se il repository collegato ha il **webhook di Render** installato (GitHub → Settings → Webhooks): senza webhook Render non viene avvisato e i push restano senza deploy.
+Il pulsante crea su [Render](https://render.com) un servizio web gratuito partendo dal [render.yaml](render.yaml) e dal [Dockerfile](Dockerfile) di questo repository: serve un account Render (gratuito, **senza carta**) e l'autorizzazione a leggere il repository GitHub. Da lì il deploy parte da solo: il servizio è collegato al repository tramite l'**app GitHub di Render** e con `autoDeploy: true` in [render.yaml](render.yaml) ogni push su `main` fa ricostruire e ripubblicare il sito in un minuto circa, senza toccare il pannello. Se in un servizio nuovo i push non avviano niente, il collegamento manca: si aggiunge da **Settings → Build → Source → Edit** scegliendo il repository dal provider GitHub (serve l'app Render installata sull'account GitHub), altrimenti resta **Manual Deploy → Deploy latest commit**.
 
 Cosa aspettarsi dal piano gratuito:
 

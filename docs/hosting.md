@@ -19,7 +19,7 @@ indirizzo **sempre acceso con dati che non si azzerano**, spendendo zero.
 | Accensione | si spegne dopo 15 minuti di inattività (prima richiesta lenta di ~1 minuto) | sempre acceso |
 | Disco | temporaneo: a ogni deploy o riavvio si perdono richieste, account creati, chiavi VAPID | disco che sopravvive |
 | Notifiche push | i telefoni vanno riattivati a ogni riavvio (le chiavi cambiano) | chiavi stabili |
-| Aggiornamenti | click su **Manual Deploy** | un comando |
+| Aggiornamenti | push su `main` (deploy automatico) | `git pull` e ricostruzione |
 
 Per la beta va benissimo così; per il team serve una VM (o un piano a pagamento,
 ~7 $/mese su Render).
