@@ -56,6 +56,10 @@ Come è fatto:
   `./public`, `run_worker_first: true`, variabile `ORIGIN`.
 - [`package.json`](../package.json) — solo `wrangler` come dipendenza di sviluppo.
 
+**Il Worker è collegato al repository**: ogni push su `main` lo ripubblica da
+solo (Workers Builds), quindi `npx wrangler deploy` serve solo per un deploy
+manuale immediato o per cambiare `ORIGIN`.
+
 Comandi (Node e `wrangler` non sono installati nel sistema: sono in `.tools/`,
 ignorato da git — `export PATH="$PWD/.tools/node/bin:$PATH"`), dalla radice:
 
