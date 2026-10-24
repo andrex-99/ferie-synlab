@@ -2087,6 +2087,7 @@
     rejected: "rifiutate", cancelled: "annullate" };
 
   function formatBytes(bytes) {
+    if (bytes === null || bytes === undefined || Number.isNaN(Number(bytes))) return "—";
     const value = Number(bytes) || 0;
     if (value < 1024) return `${value} B`;
     if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
@@ -2131,20 +2132,19 @@
     const statuses = Object.entries(counts.requests_by_status || {})
       .map(([key, value]) => `${REQUEST_STATUS_LABELS[key] || key} ${value}`).join(" · ");
 
-    const serverCard = diagnosticCard("Stato del server", diagnosticRows([
+    const serverCard = diagnosticCard("Stato del servizio", diagnosticRows([
       ["Organizzazione", server.org],
-      ["Ora del server", formatMoment(server.local_time)],
+      ["Ora del servizio", formatMoment(server.local_time)],
       ["Fuso orario", server.timezone],
-      ["Avviato", formatMoment(server.started_at)],
-      ["Attivo da", formatUptime(server.uptime_seconds)],
+      ["Istanza avviata", formatMoment(server.started_at)],
+      ["Istanza attiva da", formatUptime(server.uptime_seconds)],
       ["Runtime", server.python],
-      ["Istanza", server.pid],
       ["URL pubblico", server.base_url],
     ]));
 
     const storageCard = diagnosticCard("Dati persistenti", diagnosticRows([
       ["Archivio", storage.data_dir],
-      ["Database", storage.database],
+      ["Tabelle", storage.database],
       ["Dimensione", formatBytes(storage.database_bytes)],
       ["Ultima modifica", formatMoment(storage.database_modified)],
       ["Utenti", counts.users],
@@ -2152,8 +2152,7 @@
       ["Richieste", counts.requests],
       ["Per stato", statuses],
       ["Email nel registro", counts.outbox],
-      ["Allegati avatar", storage.avatar_files],
-      ["Email archiviate", storage.outbox_files],
+      ["Foto profilo", storage.avatar_files],
     ]));
 
     const emailCard = diagnosticCard("Email e notifiche", diagnosticRows([
@@ -2177,7 +2176,7 @@
     const errorsCard = diagnosticCard("Errori recenti", errors.length
       ? `<ul class="diag-lines">${errors.slice().reverse().map((entry) =>
           `<li class="diag-line diag-line--error"><time>${esc(entry.clock)}</time><span>${esc(entry.message)}</span></li>`).join("")}</ul>`
-      : '<p class="diag-empty">Nessun errore registrato da quando il server è avviato.</p>');
+      : '<p class="diag-empty">Nessun errore registrato da quando il servizio è avviato.</p>');
 
     const mails = data.outbox_recent || [];
     const mailsCard = diagnosticCard("Ultime email", mails.length
@@ -2190,7 +2189,7 @@
       : '<p class="diag-empty">Nessuna email generata.</p>');
 
     const logs = (data.logs || []).slice().reverse();
-    const logsCard = diagnosticCard("Log del server", logs.length
+    const logsCard = diagnosticCard("Log del servizio", logs.length
       ? `<div class="diag-console">${logs.map((entry) =>
           `<div class="diag-line${entry.level === "error" ? " diag-line--error" : ""}"><time>${esc(entry.clock)}</time><span>${esc(entry.message)}</span></div>`).join("")}</div>`
       : '<p class="diag-empty">Nessuna riga di log registrata.</p>');

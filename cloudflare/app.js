@@ -36,8 +36,17 @@ import { decisionPage, errorPage } from "./lib/pages.js";
 import { deliverWeeklyDigest, runReminders, runWeeklyDigest } from "./lib/tasks.js";
 import { notifyPush, pushConfigured } from "./lib/push.js";
 
-const STARTED_AT = new Date();
-const DECISION_MAX_DAYS = 30;
+/**
+ * Inizio dell'istanza del Worker, calcolato alla prima richiesta: al caricamento
+ * del modulo `new Date()` può valere l'epoca, e la Diagnostica mostrerebbe date
+ * del 1970.
+ */
+let ISOLATE_STARTED_AT = null;
+function isolateStartedAt() {
+  if (!ISOLATE_STARTED_AT) ISOLATE_STARTED_AT = new Date();
+  return ISOLATE_STARTED_AT;
+}
+
 
 class ApiError extends Error {
   constructor(status, message, code = null) {
@@ -527,7 +536,7 @@ async function recordDecision(env, state, req, coord, decision, note) {
   req.decided_by = coord.id;
   req.decision_note = note;
   await saveRequest(env, req);
-  await logEvent(env, "info", `Richiesta ${req.id} ${req.status} da ${coord.name}`);
+  await logEvent(env, "info", `Richiesta ${req.id} ${req.status === "approved" ? "approvata" : "rifiutata"} da ${coord.name}`);
   return requester;
 }
 
@@ -721,7 +730,7 @@ async function apiDeleteUser(ctx, userId) {
   if (target.avatar) await deleteAvatar(env, target.avatar);
   state.users = state.users.filter((item) => item.id !== userId);
   state.requests = state.requests.filter((req) => req.user_id !== userId);
-  await logEvent(env, "info", `Accesso eliminato da ${coord.name}: ${target.name} <${target.email}> (${removedRequests} richieste)`);
+  await logEvent(env, "info", `Accesso eliminato da ${coord.name}: ${target.name} <${target.email}> (${removedRequests} ${removedRequests === 1 ? "richiesta" : "richieste"})`);
   return json({ ok: true, removed_requests: removedRequests });
 }
 
@@ -888,8 +897,8 @@ async function apiDiagnostics(ctx) {
       org: cfg.orgName,
       local_time: now.iso,
       timezone: cfg.timezone,
-      started_at: STARTED_AT.toISOString(),
-      uptime_seconds: Math.round((Date.now() - STARTED_AT.getTime()) / 1000),
+      started_at: isolateStartedAt().toISOString(),
+      uptime_seconds: Math.round((Date.now() - isolateStartedAt().getTime()) / 1000),
       python: "Cloudflare Workers (V8)",
       pid: "—",
       base_url: cfg.baseUrl,

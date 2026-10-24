@@ -93,7 +93,7 @@ export async function runWeeklyDigest(env, cfg, { force = false } = {}) {
       weekly_digest_week: result.week_start,
       weekly_digest_sent_at: nowIso(),
     });
-    await addLog(env, "info", `Riepilogo settimanale inviato a ${result.sent} coordinatori (${result.absences} assenze)`);
+    await addLog(env, "info", `Riepilogo settimanale inviato a ${result.sent} ${result.sent === 1 ? "coordinatore" : "coordinatori"} (${result.absences} ${result.absences === 1 ? "assenza" : "assenze"})`);
   } else if (result.skipped) {
     await addLog(env, "info", `Riepilogo settimanale non inviato: ${result.skipped}`);
   }
