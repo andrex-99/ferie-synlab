@@ -1,0 +1,28 @@
+# Cloudflare Tunnel "con nome": pubblica l'app in HTTPS su un hostname del tuo
+# dominio, senza aprire porte sul router e senza gestire certificati.
+#
+# Setup, una volta sola (dominio con i nameserver su Cloudflare):
+#   cloudflared tunnel login                      # apre il browser sull'account
+#   cloudflared tunnel create ferie               # crea il tunnel e le credenziali
+#   cloudflared tunnel route dns ferie ferie.esempio.it
+#
+# Avvio, dalla radice del repository, con l'app in ascolto su 127.0.0.1:8080:
+#   cloudflared tunnel --config deploy/cloudflare/tunnel.yml run ferie
+# Dentro Docker il servizio si chiama `app` e questo file non serve: si usa il
+# token, vedi deploy/docker-compose.tunnel.yml.
+#
+# Controllo delle regole senza rete:
+#   cloudflared tunnel --config deploy/cloudflare/tunnel.yml ingress validate
+
+tunnel: ferie
+
+ingress:
+  - hostname: ferie.esempio.it
+    # Dentro Docker: http://app:8080 — fuori da Docker: http://127.0.0.1:8080
+    service: http://app:8080
+    originRequest:
+      # L'app costruisce i link delle email dal nome host della richiesta:
+      # deve vedere quello pubblico, non quello interno del container.
+      httpHostHeader: ferie.esempio.it
+      connectTimeout: 15s
+  - service: http_status:404

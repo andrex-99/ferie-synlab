@@ -1,0 +1,28 @@
+# Variante "Cloudflare Tunnel" di deploy/docker-compose.yml: al posto di Caddy
+# (che pubblica 80/443 e gestisce il certificato) c'è un tunnel in uscita.
+# Risultato: nessuna porta aperta sul router, HTTPS valido su un hostname tuo.
+#
+# Nel .env della radice servono:
+#   CLOUDFLARE_TUNNEL_TOKEN=...      (Cloudflare Zero Trust → Networks → Tunnels)
+#   APP_BASE_URL=https://ferie.esempio.it
+#
+#   sudo docker compose --env-file .env \
+#       -f deploy/docker-compose.yml -f deploy/docker-compose.tunnel.yml up -d --build
+#
+# `--env-file .env` serve perché le variabili ${...} qui sotto vengono lette da
+# quel file (il .env accanto ai compose, in deploy/, non esiste).
+#
+# Il tunnel va creato dal pannello Cloudflare con una Public Hostname che punta
+# al servizio HTTP `app:8080` (il nome del servizio in questo compose).
+
+services:
+  # Caddy resta nel file base ma non parte: il profilo non è selezionato.
+  caddy:
+    profiles: ["caddy"]
+
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: "tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN:?manca CLOUDFLARE_TUNNEL_TOKEN nel .env}"
+    depends_on:
+      - app

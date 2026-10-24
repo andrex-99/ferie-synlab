@@ -7,7 +7,7 @@ indirizzo **sempre acceso con dati che non si azzerano**, spendendo zero.
 - [Quale host scegliere](#quale-host-scegliere)
 - [Ricetta consigliata: Oracle Cloud Always Free](#ricetta-consigliata-oracle-cloud-always-free)
 - [Alternativa: Google Cloud e2-micro](#alternativa-google-cloud-e2-micro)
-- [Cloudflare: si può?](#cloudflare-si-può)
+- [Cloudflare: si può?](#cloudflare-si-può) · piano completo in [cloudflare.md](cloudflare.md)
 - [Quale provider email usare](#quale-provider-email-usare)
 - [Verificare che le email partano davvero](#verificare-che-le-email-partano-davvero)
 - [Aggiornare e fare un backup](#aggiornare-e-fare-un-backup)
@@ -198,6 +198,12 @@ un file su disco). Ha senso in un caso preciso: hai già un PC/NAS sempre acceso
 in studio, dietro il router, e non vuoi aprire porte né gestire un certificato.
 Se invece la macchina va accesa solo per l'app, la VM Oracle resta più semplice
 e più affidabile.
+
+Il **piano completo** — config del tunnel con nome già pronta
+([deploy/cloudflare/tunnel.yml](../deploy/cloudflare/tunnel.yml)), variante
+Docker che sostituisce Caddy, prova fatta con un quick tunnel e la mappa del
+lavoro per arrivare a girare *dentro* Cloudflare (Worker + D1) — è in
+[cloudflare.md](cloudflare.md).
 
 ### Ricetta: Cloudflare Tunnel su una macchina tua
 
