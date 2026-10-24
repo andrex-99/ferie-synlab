@@ -424,6 +424,9 @@ export async function sendMail(env, cfg, mail) {
     entry.error = `${error && error.name ? error.name : "Error"}: ${error && error.message ? error.message : error}`;
     await addLog(env, "error", `Invio email fallito per ${entry.to}: ${entry.error}`);
   }
+  // In modalità simulata il provider va indicato lo stesso: il registro email
+  // mostra "demo" e non una riga vuota.
+  if (provider === "demo") entry.provider = "demo";
   await setOutboxResult(env, entry.id, entry.provider, entry.error);
   return entry;
 }
