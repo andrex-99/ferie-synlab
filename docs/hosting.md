@@ -1,7 +1,9 @@
 # Mettere l'app online per davvero (e gratis)
 
-Questa guida serve per il passaggio dalla **demo** su Render (piano gratuito) a un
-indirizzo **sempre acceso con dati che non si azzerano**, spendendo zero.
+Questa guida riguarda il **server Python** (`server.py`), per chi vuole ospitarlo
+su una **macchina propria** con disco persistente. L'app in produzione non usa
+più questo percorso: gira su **Cloudflare Worker + D1**, e la guida di
+riferimento è [cloudflare.md](cloudflare.md).
 
 - [Perché Render gratis non basta per il team](#perché-render-gratis-non-basta-per-il-team)
 - [Quale host scegliere](#quale-host-scegliere)
@@ -12,17 +14,17 @@ indirizzo **sempre acceso con dati che non si azzerano**, spendendo zero.
 - [Verificare che le email partano davvero](#verificare-che-le-email-partano-davvero)
 - [Aggiornare e fare un backup](#aggiornare-e-fare-un-backup)
 
-## Perché Render gratis non basta per il team
+## Perché serve un disco persistente
 
-| Cosa | Render gratuito | Serve per l'uso reale |
+| Cosa | Host senza disco persistente | Serve per l'uso reale |
 | --- | --- | --- |
-| Accensione | si spegne dopo 15 minuti di inattività (prima richiesta lenta di ~1 minuto) | sempre acceso |
+| Accensione | può spegnersi dopo 15 minuti di inattività (prima richiesta lenta) | sempre acceso |
 | Disco | temporaneo: a ogni deploy o riavvio si perdono richieste, account creati, chiavi VAPID | disco che sopravvive |
 | Notifiche push | i telefoni vanno riattivati a ogni riavvio (le chiavi cambiano) | chiavi stabili |
-| Aggiornamenti | push su `main` (deploy automatico) | `git pull` e ricostruzione |
+| Aggiornamenti | deploy manuale o automatico | `git pull` e riavvio |
 
-Per la beta va benissimo così; per il team serve una VM (o un piano a pagamento,
-~7 $/mese su Render).
+Cloudflare risolve il problema alla radice (Worker + D1, niente disco da
+montare); questa pagina spiega l'alternativa con una VM.
 
 ## Quale host scegliere
 
@@ -182,10 +184,21 @@ Stessa ricetta, cambia solo la creazione della macchina:
 5. Tieni d'occhio gli **1 GB/mese** di traffico in uscita: per un team va
    benissimo, ma non usarlo per video o file grossi.
 
-## Cloudflare: si può?
+## Cloudflare: è la strada di produzione
 
-Risposta breve: **per ospitare l'app, no; per metterla online da una macchina
-tua, sì.** Cloudflare è ottima come porta d'ingresso, non come casa dell'app.
+L'app **non gira più come processo Python in produzione**: è stata portata su
+**Worker + D1**, quindi Cloudflare non è più solo una porta d'ingresso ma la
+casa dell'app. Non serve nessuna VM, nessun tunnel e nessun disco da montare:
+
+- il Worker serve interfaccia e API ([cloudflare/app.js](../cloudflare/app.js));
+- i dati stanno in **D1** e sopravvivono a deploy e inattività;
+- il Cron Trigger manda riepilogo settimanale e promemoria;
+- le email passano da Resend o Mailjet in HTTPS (SMTP non esiste in un Worker).
+
+Istruzioni complete: [cloudflare.md](cloudflare.md).
+
+Quanto segue resta valido **solo per chi self-hospita il server Python** su una
+macchina propria, eventualmente dietro un Cloudflare Tunnel:
 
 | Prodotto Cloudflare | L'app ci gira? | Perché |
 | --- | --- | --- |
@@ -251,10 +264,10 @@ L'app supporta **Resend**, **Mailjet** (entrambi via API HTTPS) e un normale
 | **Resend** | 3.000/mese, 100/giorno | **sì**, verificato con record DNS | no |
 | **Mailjet (API HTTPS)** | 6.000/mese, 200/giorno | no: basta verificare l'indirizzo mittente via email; con il dominio si consegna meglio | no |
 
-**Se il backend è su Render gratuito, SMTP non è un'opzione**: Render blocca le
-connessioni in uscita sulle porte 25, 465 e 587. Lì servono le API HTTPS, quindi
-**Resend** (con dominio verificato) o **Mailjet** (anche con solo l'indirizzo
-mittente verificato).
+**Sul Worker SMTP non è un'opzione**: le connessioni in uscita passano solo da
+HTTPS, quindi servono **Resend** (con dominio verificato) o **Mailjet** (anche
+con solo l'indirizzo mittente verificato). Il server Python self-hosted accetta
+invece anche SMTP, se l'host non blocca le porte 25/465/587.
 
 **Consiglio pratico:** parti con **Gmail** (zero configurazione, arriva davvero a
 colleghi su Gmail, Outlook, Libero, Tiscali), e passa a **Resend** quando avrai un
@@ -347,9 +360,9 @@ Tre controlli, in ordine, dalla radice del progetto:
    viene recuperato appena riparte, nella stessa settimana. Il giorno si può
    cambiare da **Riepilogo ogni** nello stesso pannello: la scelta resta in
    `db.json` e prevale su `WEEKLY_DIGEST_WEEKDAY`. Su un servizio che
-   va in pausa da solo (piano gratuito di Render) non c'è nessun processo attivo
-   all'ora prevista, quindi l'email può non partire: su una VM sempre accesa il
-   problema non esiste.
+   va in pausa da solo non c'è nessun processo attivo all'ora prevista, quindi
+   l'email può non partire: su una VM sempre accesa il problema non esiste (e
+   sul Worker ci pensa il Cron Trigger).
 
 Per la consegna: con Gmail e Brevo non serve altro; con un dominio tuo, SPF e
 DKIM devono risultare **verified** nel pannello del provider, altrimenti Gmail e

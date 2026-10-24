@@ -15,7 +15,7 @@ Flusso completo:
 5. I giorni approvati compaiono nel **calendario condiviso** visibile a tutti, e restano disponibili come calendario `.ics` iscrivibile su iPhone/Android/Google Calendar.
 6. Il coordinatore ha una coda con contatori, statistiche del mese e il registro di tutte le email inviate; può **rivalutare** una decisione già presa, modificare i propri dati e **eliminare** gli accessi.
 
-Nessuna dipendenza esterna: solo Python 3.8+ e il browser. I dati restano in `data/db.json`.
+L'app pubblicata gira interamente su **Cloudflare**: Worker per interfaccia e API, **D1** per i dati. Non c'è nessun server da tenere acceso e le richieste restano anche quando il Worker viene aggiornato o resta inattivo. Il server Python in `server.py` resta per lo sviluppo in locale e per chi preferisce una macchina propria.
 
 ---
 
@@ -44,21 +44,23 @@ Finché non configuri un servizio email, la schermata di accesso mostra i quattr
 
 Il calendario parte vuoto: le richieste compaiono man mano che le invii. Per ripartire da zero cancella la cartella `data/`: al riavvio vengono ricreati solo i quattro account dimostrativi.
 
-## Demo online con un clic
+## Dove gira: Cloudflare
 
-[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/andrex-99/ferie-synlab)
+L'app è pubblicata su Cloudflare come **Worker**: `public/` è servito come asset statico, le API sono in [cloudflare/app.js](cloudflare/app.js) e i dati stanno in **D1**, il database SQLite gestito da Cloudflare. Non c'è nessun processo Python da tenere acceso: le richieste restano anche quando il Worker viene aggiornato o resta inattivo, e un Cron Trigger ogni ora manda riepilogo e promemoria.
 
-Il pulsante crea su [Render](https://render.com) un servizio web gratuito partendo dal [render.yaml](render.yaml) e dal [Dockerfile](Dockerfile) di questo repository: serve un account Render (gratuito, **senza carta**) e l'autorizzazione a leggere il repository GitHub. Da lì il deploy parte da solo: il servizio è collegato al repository tramite l'**app GitHub di Render** e con `autoDeploy: true` in [render.yaml](render.yaml) ogni push su `main` fa ricostruire e ripubblicare il sito in un minuto circa, senza toccare il pannello. Se in un servizio nuovo i push non avviano niente, il collegamento manca: si aggiunge da **Settings → Build → Source → Edit** scegliendo il repository dal provider GitHub (serve l'app Render installata sull'account GitHub), altrimenti resta **Manual Deploy → Deploy latest commit**.
+- sito: <https://ferie-synlab.espoandy99.workers.dev>
+- configurazione: [wrangler.jsonc](wrangler.jsonc) — ogni push su `main` ripubblica il Worker da solo (Workers Builds collegato al repository)
+- schema e tabelle: [cloudflare/schema.sql](cloudflare/schema.sql)
+- guida completa (segreti, email, backup, dominio): [docs/cloudflare.md](docs/cloudflare.md)
 
-Cosa aspettarsi dal piano gratuito:
+Per sviluppare in locale con la stessa architettura:
 
-- il servizio va in pausa dopo **15 minuti senza visite** e riparte alla prima richiesta, con circa un minuto di attesa (un ping periodico su `/` lo tiene sveglio);
-- il disco è **temporaneo**: a ogni riavvio il database riparte da zero con i quattro account dimostrativi, quindi va benissimo per far provare l'app, non per raccogliere richieste vere;
-- per un uso reale servono un piano con disco persistente e le variabili email descritte in [Configurazione](#configurazione).
+```bash
+npx wrangler d1 execute ferie-db --local --file=cloudflare/schema.sql
+npx wrangler dev
+```
 
-### Uso reale: sempre acceso, gratis
-
-[**docs/hosting.md**](docs/hosting.md) spiega come passare a una macchina **sempre accesa con disco persistente** senza spendere nulla (Oracle Cloud Always Free, oppure Google e2-micro): i file [deploy/docker-compose.yml](deploy/docker-compose.yml) e [deploy/Caddyfile](deploy/Caddyfile) avviano l'app con HTTPS automatico in due comandi, e funzionano anche senza un dominio tuo. Nella stessa guida ci sono anche il confronto dei provider email gratuiti (Gmail, Brevo, Resend) con le variabili da copiare nel `.env`, i controlli per verificare che le email partano davvero e la risposta alla domanda **Cloudflare**: non può ospitare il backend Python così com'è (i Containers richiedono un piano a pagamento e azzerano il disco a ogni riavvio), ma può servire il sito e inoltrare le API a un server tuo — è quello che fa la configurazione di questo repository. Su **Cloudflare** il sito è già pubblicato: [cloudflare/worker.js](cloudflare/worker.js) serve `public/` come asset statici e inoltra le API al server Python (`ORIGIN`), così `https://ferie-synlab.espoandy99.workers.dev` funziona per intero, login compreso; la configurazione è in [wrangler.jsonc](wrangler.jsonc) e ogni push su `main` ripubblica il Worker da solo (Workers Builds collegato al repository). Il piano completo, i limiti e la configurazione del tunnel sono in [docs/cloudflare.md](docs/cloudflare.md).
+Il piano gratuito copre ampiamente un team di questa dimensione: 100.000 richieste al giorno e D1 con 5 GB di spazio. Il backend Python descritto sotto resta come alternativa per chi vuole ospitare l'app su una macchina propria ([docs/hosting.md](docs/hosting.md)).
 
 ---
 
@@ -149,7 +151,7 @@ cp .env.example .env
 | `TZ` | Fuso orario con cui viene calcolata l'ora del riepilogo (default `Europe/Rome`) |
 | `VAPID_SUBJECT` | Contatto (`mailto:` o URL) incluso nelle notifiche push; default `MAIL_FROM` |
 
-Sono supportati **Resend**, **Mailjet** (API HTTPS) e un normale **SMTP**. Senza nessuno dei tre resta attiva la modalità simulata. Attenzione: il piano gratuito di **Render blocca le porte SMTP in uscita** (25, 465, 587), quindi lì servono per forza Resend o Mailjet.
+Sono supportati **Resend** e **Mailjet** (API HTTPS); il server Python accetta anche **SMTP**. Senza nessun provider resta attiva la modalità simulata: le email vengono registrate e restano consultabili dal coordinatore. Sul Worker SMTP non è utilizzabile — le connessioni in uscita passano solo da HTTPS — quindi in produzione servono Resend o Mailjet.
 
 ### Cosa contiene ogni email
 
@@ -303,34 +305,32 @@ I test della crittografia (`tests/test_webpush.py`) verificano la cifratura `aes
 
 ## Dati, backup e sicurezza
 
-- Tutto è in `data/`: `db.json` (utenti e richieste), `secret.key` (firma di sessioni e link), `outbox/` (copia delle email), `avatars/` (foto profilo).
+- In produzione i dati sono in **Cloudflare D1**: utenti, richieste, meta, registro email, foto profilo, sottoscrizioni push e log della Diagnostica (tabelle in [cloudflare/schema.sql](cloudflare/schema.sql)). Sopravvivono ai deploy e ai periodi di inattività del Worker.
+- Backup: `npx wrangler d1 export ferie-db --remote --output backup.sql`, oppure dal pannello Cloudflare (**D1 → ferie-db → Export**). Per ripristinare si riparte dallo schema e si importa il file.
+- Il server Python locale usa invece `data/`: `db.json`, `secret.key`, `outbox/`, `avatars/`. Si fa il backup copiando la cartella.
 - Le foto sono facoltative, vengono compresse nel browser e accettate solo in JPG, PNG o WebP fino a 70 KB; il server verifica il contenuto e richiede una sessione per servirle.
 - La palette contiene 12 colori: l'app propone il primo libero, ma il coordinatore può assegnare lo stesso colore a più persone.
-- Backup: copia la cartella `data/`. Per ripristinare, rimettila accanto a `server.py`.
 - Le sessioni durano 30 giorni e sono firmate con HMAC; il cookie è `HttpOnly` e `SameSite=Lax`.
 - I link di approvazione scadono dopo 30 giorni e sono firmati: non richiedono login, quindi trattali come informazioni riservate.
-- I PIN di 4 cifre vanno bene per un team fidato; per esposizione su Internet usa PIN più lunghi (fino a 8 cifre) e **HTTPS**.
+- I PIN sono protetti con PBKDF2-SHA256 (10.000 iterazioni, il budget di CPU del piano gratuito di Workers) e con un limite di dieci tentativi per indirizzo IP; per l'uso reale usa PIN da 6-8 cifre.
 
 ### Mettere online l'app
 
-L'app è un singolo processo Python. Esempi:
+- **Cloudflare (produzione)**: `npx wrangler deploy`. I segreti (`SESSION_SECRET`, `MAILJET_API_KEY`, `MAILJET_SECRET_KEY`, `VAPID_PRIVATE_JWK`) si impostano con `npx wrangler secret put` e non finiscono nel repository. Dettagli in [docs/cloudflare.md](docs/cloudflare.md).
+- **Macchina propria (facoltativo)**: resta il server Python — `HOST=0.0.0.0 python3 server.py` per la rete locale, oppure dietro un reverse proxy HTTPS con `APP_BASE_URL`. Guida in [docs/hosting.md](docs/hosting.md).
 
-```bash
-# rete locale (accesso da iPhone/Android sullo stesso Wi-Fi)
-HOST=0.0.0.0 python3 server.py
-
-# dietro un reverse proxy HTTPS (nginx, Caddy, Tailscale Funnel, Cloudflare Tunnel)
-APP_BASE_URL=https://ferie.esempio.it python3 server.py
-```
-
-In produzione conviene avviarlo con `systemd`, `launchd` o `tmux`/`screen` e metterlo dietro HTTPS: i link nelle email devono essere raggiungibili dal telefono.
+In entrambi i casi i link nelle email devono essere raggiungibili dal telefono, quindi servono un indirizzo pubblico e HTTPS.
 
 ---
 
 ## Struttura del progetto
 
 ```
-server.py              server HTTP + API + email + ICS + notifiche push (solo stdlib)
+cloudflare/app.js      Worker: router, API, link decide, ICS, avatar, cron
+cloudflare/lib/        stato su D1, autenticazione, email, pagine, push, lavori periodici
+cloudflare/schema.sql  tabelle D1 (idempotenti)
+wrangler.jsonc         configurazione di produzione (Worker + D1 + cron)
+server.py              server Python per lo sviluppo/self-hosting (solo stdlib)
 webpush.py             cifratura Web Push, VAPID e firma ES256 (solo stdlib)
 public/index.html      interfaccia
 public/styles.css      stile responsive, tema chiaro/scuro, animazioni e tutorial (safe-area iOS)
@@ -387,7 +387,8 @@ Il logo in `public/assets/synlab-logo-4c.png` è stato scaricato da [Wikimedia C
 ## Limiti noti
 
 - Pensata per un singolo team/organizzazione (non multi-azienda).
-- Le notifiche push richiedono **HTTPS**; su iPhone funzionano da iOS 16.4 e solo con l'app aggiunta alla schermata Home. Sui server con disco temporaneo (come il piano gratuito di Render) le chiavi VAPID cambiano a ogni riavvio, quindi i dispositivi vanno riattivati.
+- Le notifiche push richiedono **HTTPS**; su iPhone funzionano da iOS 16.4 e solo con l'app aggiunta alla schermata Home. Le chiavi VAPID stanno nei segreti del Worker, quindi restano stabili tra un deploy e l'altro.
 - Eliminare un accesso cancella anche le sue richieste (storico compreso): l'operazione non si può annullare.
 - Nessuna integrazione con sistemi di timbratura o paghe.
-- Il registro email conserva gli ultimi 100 messaggi (HTML incluso) in `data/outbox/`: non contiene dati sensibili oltre a nomi, date e note già presenti nel database.
+- Il registro email conserva gli ultimi 100 messaggi (HTML incluso) in D1: non contiene dati sensibili oltre a nomi, date e note già presenti nel database.
+- Il Worker non esegue Python: chi modifica `server.py` per il self-hosting deve riportare la stessa logica in `cloudflare/` perché il sito pubblicato la usi.

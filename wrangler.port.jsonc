@@ -1,0 +1,45 @@
+{
+  // Versione di prova della nuova app Cloudflare-nativa (Worker + D1).
+  // Serve a testare senza toccare `ferie-synlab`, che resta online finché non
+  // questa non ha la parità di funzioni.
+  //
+  //   npx wrangler d1 execute ferie-db --local --file=cloudflare/schema.sql --config wrangler.port.jsonc
+  //   npx wrangler dev --config wrangler.port.jsonc
+  //   npx wrangler deploy --config wrangler.port.jsonc
+  "name": "ferie-cloud",
+  "main": "cloudflare/app.js",
+  "compatibility_date": "2026-10-01",
+
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": true
+  },
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "ferie-db",
+      "database_id": "ce1f44ae-5fc5-4638-8a3c-c0b51fbd50c0"
+    }
+  ],
+
+  "vars": {
+    "ORG_NAME": "Synlab Manifattura Firenze",
+    "ORG_SHORT": "Synlab",
+    "ORG_SITE": "Manifattura Firenze",
+    "ORG_BRAND": "SYNLAB",
+    "TZ": "Europe/Rome",
+    "WEEKLY_DIGEST": "1",
+    "WEEKLY_DIGEST_WEEKDAY": "3",
+    "WEEKLY_DIGEST_HOUR": "8",
+    "REMINDER_HOURS": "24",
+    "MAIL_FROM_NAME": "Synlab Manifattura Firenze",
+    "VAPID_PUBLIC_KEY": "BJESmKWkMPU38VLyz4v60EszP9hpWt0rN-_qUjkZIq8_TZFASeaxY_Z3AM3dcuiDQxgKRNNOBzFczxv-dcddp6Q",
+    "VAPID_SUBJECT": "mailto:amministrazione@synlab.it"
+  },
+
+  "observability": {
+    "enabled": true
+  }
+}

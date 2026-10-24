@@ -1,261 +1,208 @@
-# Portare l'app su Cloudflare
+# L'app su Cloudflare (Worker + D1)
 
-Questa è la mappa del lavoro per spostare l'app su Cloudflare, con quello che è
-già pronto e quello che manca. **Non è una migrazione da un comando:** l'app è un
-processo Python con un database su file, e Cloudflare non esegue processi.
+Produzione: <https://ferie-synlab.espoandy99.workers.dev>
 
-## 1. Tre modi, tre risultati diversi
+L'app **non ha backend esterni**. Un solo Worker fa tutto e i dati stanno in
+**D1**, il database SQLite gestito da Cloudflare:
 
-| Modo | Dove gira l'app | Costo | Cosa cambia nel codice | Dati |
-| --- | --- | --- | --- | --- |
-| **Tunnel** (`cloudflared`) | sulla tua macchina / VM come oggi | **gratis** | **niente** | restano su disco, come ora |
-| **Workers + D1 + R2 + Cron** | dentro Cloudflare | gratis (limiti) o ~5 $/mese | **riscrittura** del server in Worker Python | D1 (dati) e R2 (file) |
-| **Containers** | contenitore Linux dentro Cloudflare | piano Workers Paid, da ~5 $/mese | poca, ma il disco è **effimero** | servono comunque D1/R2 |
-
-In sintesi: il **Tunnel** mette l'app «dietro e sotto» Cloudflare in un'ora e
-senza toccare il codice, ma la macchina deve restare accesa. Per averla **dentro**
-Cloudflare bisogna riscrivere il server: è un lavoro di più giornate, non una
-configurazione.
-
-### Se hai già un progetto Cloudflare Pages
-
-Pages collegato a GitHub pubblica da solo a ogni push, ma **non esegue questo
-backend**:
-
-- le **Pages Functions** sono documentate per JavaScript/TypeScript; Python è un
-  linguaggio dei **Worker**, non delle Functions. Una Function può chiamare un
-  Worker Python con un *service binding*, ma è un secondo pezzo da scrivere;
-- su Pages **non esistono i Cron Trigger**, quindi promemoria e riepilogo
-  settimanale non potrebbero girare lì;
-- D1 e R2 invece sono disponibili come binding anche su Pages, e il progetto ha
-  un URL `*.pages.dev` gratis, senza dominio;
-- un dominio personalizzato su un sottodominio si può agganciare anche con un
-  CNAME esterno, ma per un dominio *apex* serve la zona su Cloudflare.
-
-Quindi Pages va bene per **servire il frontend** (`public/` è già tutto statico),
-mentre l'API resta sul server Python raggiunto dal tunnel; in alternativa si
-riscrive l'API come Worker. Il frontend oggi chiama `/api/...` in modo relativo
-con `credentials: "same-origin"`: per separare i due pezzi servirebbe lo stesso
-dominio (Pages + Function che inoltra `/api` al tunnel) oppure CORS, cookie
-`SameSite=None; Secure` e una base URL configurabile nel client.
-
-## 2. Fase 0 — Worker su `workers.dev` (fatto, online)
-
-Il sito è pubblicato su Cloudflare e **funziona**: `https://ferie-synlab.espoandy99.workers.dev`
-serve l'interfaccia e inoltra le API al server Python, sullo stesso hostname
-(quindi cookie di sessione compresi).
-
-Come è fatto:
-
-- [`cloudflare/worker.js`](../cloudflare/worker.js) — serve i file di `public/` con
-  il binding `ASSETS` e inoltra solo `/api/*` e `/calendar.ics` a `ORIGIN`.
-  Riscrive `Origin` (altrimenti il server risponde `403` ai `POST`) e
-  `X-Forwarded-Proto` (così il cookie è `Secure` in HTTPS e non in locale).
-- [`wrangler.jsonc`](../wrangler.jsonc) — **alla radice**, perché è lì che il
-  build da GitHub cerca la configurazione: nome `ferie-synlab`, asset da
-  `./public`, `run_worker_first: true`, variabile `ORIGIN`.
-- [`package.json`](../package.json) — solo `wrangler` come dipendenza di sviluppo.
-
-**Il Worker è collegato al repository**: ogni push su `main` lo ripubblica da
-solo (Workers Builds), quindi `npx wrangler deploy` serve solo per un deploy
-manuale immediato o per cambiare `ORIGIN`.
-
-Comandi (Node e `wrangler` non sono installati nel sistema: sono in `.tools/`,
-ignorato da git — `export PATH="$PWD/.tools/node/bin:$PATH"`), dalla radice:
-
-```bash
-npx wrangler dev --var ORIGIN:http://127.0.0.1:8080   # locale, senza login
-npx wrangler deploy                                  # pubblica su workers.dev
-npx wrangler deploy --var ORIGIN:https://ferie.tuodominio.it
-```
-
-Cambiare `ORIGIN` è l'unico passaggio per spostare il backend da Render a una VM
-o a un tunnel: il frontend e i cookie restano su Cloudflare.
-
-Cosa **non** risolve: il backend continua a girare su Render (piano gratuito),
-quindi si addormenta dopo 15 minuti e azzera i dati a ogni deploy. Il passo
-successivo per l'uso reale è mettere `ORIGIN` su una VM con disco persistente
-(fase 1) e, se si vuole, riscrivere tutto dentro Cloudflare (fase 2).
-
-Verificato il 24 ottobre 2026 su quell'URL: pagina `200`, CSS/JS `200`,
-`/api/config` `200`, login `200` con cookie, `/api/session` con il nome utente,
-`POST /api/requests` `201`, approvazione `200`, riepilogo `200`, logout che
-cancella il cookie; anche dal browser la schermata di accesso e la vista
-coordinatore caricano (4 persone, registro email, selettore del riepilogo).
-
-## 3. Fase 1 — Cloudflare davanti all'app (pronta)
-
-Già preparato in questo repository:
-
-- [`deploy/cloudflare/tunnel.yml`](../deploy/cloudflare/tunnel.yml) — tunnel con
-  nome, hostname pubblico, `httpHostHeader` corretto per i link nelle email.
-  Validato con `cloudflared tunnel --config … ingress validate`.
-- [`deploy/docker-compose.tunnel.yml`](../deploy/docker-compose.tunnel.yml) —
-  variante del compose che sostituisce Caddy con `cloudflared` (nessuna porta
-  pubblicata, nessun certificato da rinnovare).
-- `CLOUDFLARE_TUNNEL_TOKEN` documentato in [`.env.example`](../.env.example).
-
-Passi, una volta sola (servono account Cloudflare e un dominio con i nameserver
-su Cloudflare):
-
-```bash
-# 1. tunnel creato dal pannello: Zero Trust → Networks → Tunnels → Create
-#    tipo "Cloudflared", Public Hostname: ferie.tuodominio.it → HTTP app:8080
-#    poi nel .env della radice:
-#      CLOUDFLARE_TUNNEL_TOKEN=...      (token del tunnel)
-#      APP_BASE_URL=https://ferie.tuodominio.it
-
-# 2. app + tunnel (al posto di Caddy)
-sudo docker compose --env-file .env \
-  -f deploy/docker-compose.yml -f deploy/docker-compose.tunnel.yml up -d --build
-```
-
-`--env-file .env` non è un dettaglio: le variabili `${...}` dei file compose
-vengono lette da lì, non dai `env_file` dei container.
-
-Senza Docker, con `cloudflared` installato sulla macchina:
-
-```bash
-cloudflared tunnel login
-cloudflared tunnel create ferie
-cloudflared tunnel route dns ferie ferie.tuodominio.it
-cloudflared tunnel --config deploy/cloudflare/tunnel.yml run ferie
-```
-
-**Demo senza dominio** (URL temporaneo, cambia a ogni avvio, nessuna garanzia di
-uptime):
-
-```bash
-python3 server.py serve --port 8080 --no-open &
-cloudflared tunnel --url http://127.0.0.1:8080
-```
-
-Verificato davvero il 24 ottobre 2026 con un quick tunnel: pagina iniziale `200`,
-`/styles.css` e `/app.js` con il tipo corretto, `/api/config` che restituisce
-`base_url` **https** (i link nelle email restano validi), login con cookie di
-sessione e `/api/requests/pending` autenticato `200` attraverso l'edge Cloudflare.
-
-Limite della fase 1: se la macchina si spegne o dorme, il sito non risponde. È
-il motivo per cui per un'app di team resta consigliata una VM sempre accesa
-(vedi [hosting.md](hosting.md)).
-
-## 4. Fase 2 — L'app dentro Cloudflare (da fare)
-
-Riferimenti verificati sulla documentazione Cloudflare: Python Workers è **GA**
-dal 21 settembre 2026 e gira su **Pyodide** (WebAssembly) dentro l'isolate, con
-handler `fetch` e `scheduled`; **non** c'è filesystem persistente, **non** ci
-sono thread, la porta SMTP 25 è bloccata; D1, R2, KV e Durable Objects sono
-usabili dai Worker Python via FFI. Containers è **GA** dal 13 aprile 2026 ma è
-sul piano a pagamento e il disco locale è azzerato a ogni stop.
-
-### Cosa diventa cosa
-
-| Pezzo di oggi | Su Cloudflare | Note |
+| Pezzo | Dove | File |
 | --- | --- | --- |
-| `http.server` + `handle_api` (28 rotte) | Worker Python con handler `fetch` + router | si riusa la logica, cambia il trasporto |
-| `data/db.json` + `save_db` | **D1** (SQLite) | `users`, `requests`, `outbox`, `push`, `meta` |
-| `data/outbox/*.html`, avatar | **R2** | un oggetto per email, uno per avatar |
-| `data/vapid.json` | **variabili segrete** del Worker | niente file |
-| `reminder_loop`, `digest_loop` (thread) | **Cron Triggers** | ogni 15 minuti + un trigger per il riepilogo |
-| `smtplib` / `urllib` verso Resend | **solo Resend via `fetch`** | SMTP non è una strada praticabile |
-| cookie `sess` firmato con HMAC | identico, HMAC da `crypto.subtle` o `hashlib` | la sessione è già stateless: nessuna tabella |
-| `webpush.py` (VAPID, AES-GCM) | `crypto.subtle` (ECDSA P-256, ECDH, HKDF, AES-GCM) | **il pezzo più delicato**: le primitive ci sono, non esiste una ricetta ufficiale pronta |
-| Diagnostica admin | D1 + log in una tabella | spariscono pid, uptime di processo e dimensione dei file: quei riquadri vanno ripensati |
-| `public/` (HTML/CSS/JS/icone) | **Workers Assets** (o Pages) | nessuna modifica, basta il binding `ASSETS` |
+| Interfaccia (HTML, CSS, JS, icone) | asset statici del Worker | `public/` |
+| API, login, link di approvazione, `.ics`, avatar | codice del Worker | `cloudflare/app.js`, `cloudflare/lib/` |
+| Dati (utenti, richieste, email, foto, push, log) | database D1 `ferie-db` | `cloudflare/schema.sql` |
+| Riepilogo settimanale e promemoria | Cron Trigger ogni ora | `cloudflare/lib/tasks.js` |
+| Invio email | Resend o Mailjet via HTTPS | `cloudflare/lib/mail.js` |
 
-### Ordine di lavoro proposto
+Niente Render, niente VM, niente tunnel: il Worker risponde su
+`*.workers.dev` (o su un dominio tuo) e D1 conserva i dati tra un deploy e
+l'altro e durante i periodi di inattività.
 
-1. **Scheletro**: progetto Worker Python con `wrangler`, binding `ASSETS`, D1 e
-   R2; una rotta di prova `/api/health` per verificare il deploy.
-2. **Dati**: schema D1 (cinque tabelle, indici su `requests.status` e
-   `requests.user_id`) e script di import da `db.json`, così i dati attuali si
-   possono caricare e confrontare.
-3. **Autenticazione**: login/logout/sessione con lo stesso formato di cookie
-   firmato; PIN con lo stesso `pbkdf2` già usato oggi.
-4. **Richieste**: creazione, decisione, annullamento, rivalutazione, calendario e
-   `.ics` — la parte più corposa, con i test che già esistono come specifica.
-5. **Email**: invio solo via Resend (`fetch`), registro in D1 + HTML in R2,
-   reinvio, email di prova.
-6. **Cron**: promemoria ogni 15 minuti e riepilogo settimanale (stessa logica di
-   `weekly_digest_due`, con `meta` su D1 al posto del file).
-7. **Push**: VAPID con WebCrypto. Se non regge, si può partire senza push e
-   aggiungerlo dopo: è l'unico pezzo con rischio tecnico alto.
-8. **Verifica**: gli stessi scenari dei 40 test attuali contro `wrangler dev`, più
-   il doppio utente e il `403` dell'admin.
+## Cosa regge il piano gratuito
 
-### Rischi da mettere in conto
+- **100.000 richieste al giorno** al Worker: un team di 10-50 persone ne fa
+  qualche migliaio.
+- **10 ms di CPU per richiesta**: bastano per le normali API. Il login usa
+  PBKDF2 a 10.000 iterazioni proprio per restare dentro questo budget.
+- **D1**: 5 GB di spazio totale, più che sufficienti per richieste, email e
+  foto (max 70 KB ciascuna).
+- **Cron Trigger**: uno all'ora per riepilogo e promemoria.
+- **Nessuna scadenza**: il Worker non va in pausa come i servizi gratuiti con
+  disco temporaneo.
 
-- **CPU**: il piano gratuito dà **10 ms di CPU per invocazione**; con Python su
-  Pyodide è il limite che salta per primo. Se salta, serve Workers Paid
-  (~5 $/mese) o un runtime JS.
-- **Cold start**: il primo avvio di un isolate Pyodide è più lento di una
-  richiesta Python normale; per un team piccolo è accettabile, per un'app
-  «scatto» no.
-- **Push**: da rifare e da testare su iOS e Android, non è copiato e incollato.
-- **Diagnostica**: alcuni dati di oggi (PID, uptime, dimensione su disco) non
-  esistono in un Worker e vanno sostituiti, non finti.
-- **Doppio codice**: durante la migrazione convivono `server.py` e il Worker.
-  Meglio finire la fase 2 su un branch e tenere Render/VM come fallback finché i
-  test non passano tutti.
+## Primo deploy
 
-## 5. Cosa serve da te
+```bash
+npm install                      # wrangler
+npx wrangler login               # una volta sola, apre il browser
 
-1. **Account Cloudflare** (c'è, l'hai autorizzato con `wrangler login`) — serve
-   solo per pubblicare: da qui in avanti `npx wrangler deploy` è sufficiente.
-2. **Dominio**, se vuoi `ferie.qualcosa.it` al posto di `workers.dev`: un
-   sottodominio si può agganciare anche senza spostare i nameserver; per l'apex
-   serve la zona su Cloudflare.
-3. Per l'uso reale del team: **una VM sempre accesa** con `data/` sul disco, che
-   diventa l'`ORIGIN` del Worker.
-4. Solo per la fase 2 (riscrittura): carta per Workers Paid se il piano gratuito
-   non basta di CPU.
+# 1. tabelle nel database remoto (idempotente: si può rieseguire)
+npx wrangler d1 execute ferie-db --remote --file=cloudflare/schema.sql
 
-## 6. Percorso scelto (24 ottobre 2026)
+# 2. segreti (mai nel repository)
+node -e 'console.log(require("crypto").randomBytes(32).toString("hex"))' \
+  | npx wrangler secret put SESSION_SECRET
 
-- **Scelto e già attivo**: Cloudflare serve il sito e inoltra le API
-  (`worker.js` + asset), backend su Render per ora. URL:
-  `https://ferie-synlab.espoandy99.workers.dev`.
-- **Dominio**: `radiologiamf.it` non è registrato (il registro `.it` risponde
-  `Status: AVAILABLE`, il DNS `NXDOMAIN`). Finché non esiste, non c'è nessuna
-  zona da mettere su Cloudflare né record da puntare a un tunnel: si resta su
-  `workers.dev`, che funziona ed è gratis.
-- Quando il dominio esisterà, in ordine:
-  1. registrarlo presso un registrar che gestisca `.it`;
-  2. **Add a site** su Cloudflare e prendere i nameserver assegnati;
-  3. cambiare i nameserver dal registrar e attendere l'attivazione della zona;
-  4. **Workers → ferie-synlab → Settings → Domains & Routes → Add custom domain**
-     (in alternativa, tunnel con `deploy/cloudflare/tunnel.yml` verso la VM);
-  5. aggiornare `APP_BASE_URL` sul backend con l'indirizzo pubblico, così i link
-     nelle email puntano lì.
-- Il token del tunnel o qualsiasi altro segreto va solo nel `.env` della VM o nei
-  Secrets di Cloudflare, mai nel repository.
+# 3. pubblicazione
+npx wrangler deploy
+```
 
-## 7. Stato del lavoro
+Il primo caricamento di `/api/config` crea i quattro account dimostrativi
+(Giulia, Luca, Sara, Marco) con i PIN del README, così l'app è subito
+provabile. Si eliminano o si cambiano dal pannello del coordinatore.
 
-- [x] Ricognizione di cosa Cloudflare sa fare oggi (Workers Python GA, Containers
-      GA a pagamento, Tunnel gratuito).
-- [x] Config del tunnel con nome + variante Docker + token nel `.env.example`.
-- [x] Prova end-to-end con quick tunnel (HTTP, asset, cookie, login).
-- [x] Worker su Cloudflare con asset statici + proxy API, online su
-      `https://ferie-synlab.espoandy99.workers.dev`.
-- [ ] `APP_BASE_URL` sul backend uguale all'URL pubblico, così i link nelle
-      email puntano al sito su Cloudflare e non a Render.
-- [ ] Backend su una VM con disco persistente (`ORIGIN` aggiornato).
-- [ ] Dominio personalizzato per il Worker (facoltativo: si può agganciare anche
-      senza spostare i nameserver).
-- [ ] Decisione sulla fase 2 (riscrittura su D1).
-- [ ] Schema D1, import dei dati, Worker, cron, push.
+### Deploy automatico da GitHub
 
-## Fonti
+Il Worker `ferie-synlab` è collegato al repository tramite **Workers Builds**:
+ogni push su `main` ricostruisce e ripubblica. La build legge `wrangler.jsonc`
+nella radice — non spostarlo. D1 e segreti restano quelli già configurati, il
+deploy non li tocca.
 
-- Python Workers GA: <https://blog.cloudflare.com/python-workers-ga/>
-- Come funzionano i Python Workers: <https://developers.cloudflare.com/workers/languages/python/how-python-workers-work/>
-- Standard library e filesystem effimero: <https://developers.cloudflare.com/workers/languages/python/stdlib/>
-- Binding dai Worker Python (D1/R2/KV/DO): <https://developers.cloudflare.com/workers/languages/python/ffi/>
-- Cron Triggers: <https://developers.cloudflare.com/workers/configuration/cron-triggers/>
-- Limiti del piano gratuito: <https://developers.cloudflare.com/workers/platform/limits/>
-- Socket TCP e porta 25 bloccata: <https://developers.cloudflare.com/workers/runtime-apis/tcp-sockets/>
-- Containers GA e prezzi: <https://developers.cloudflare.com/containers/platform/pricing/>
-- Ciclo di vita Containers (disco effimero): <https://developers.cloudflare.com/containers/concepts/architecture/>
-- Quick Tunnels: <https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/>
-- Tunnel con hostname e requisiti DNS: <https://developers.cloudflare.com/tunnel/get-started/>
+## Segreti e variabili
+
+Si impostano con `npx wrangler secret put NOME` (valore incollato, non scritto
+nei file né in chat). Servono:
+
+| Segreto | A cosa serve |
+| --- | --- |
+| `SESSION_SECRET` | firma cookie di sessione, link di approvazione e feed `.ics` |
+| `MAILJET_API_KEY`, `MAILJET_SECRET_KEY` | invio email via Mailjet |
+| `RESEND_API_KEY` | alternativa a Mailjet (richiede un dominio verificato) |
+| `VAPID_PRIVATE_JWK` | chiave privata delle notifiche push (JSON JWK) |
+
+Variabili pubbliche in `wrangler.jsonc`: `ORG_NAME`, `ORG_SHORT`, `ORG_SITE`,
+`ORG_BRAND`, `TZ`, `APP_BASE_URL` (URL usato nei link delle email),
+`WEEKLY_DIGEST`, `WEEKLY_DIGEST_WEEKDAY`, `WEEKLY_DIGEST_HOUR`,
+`REMINDER_HOURS`, `MAIL_FROM_NAME`, `VAPID_PUBLIC_KEY`, `VAPID_SUBJECT`.
+
+`MAIL_FROM` va aggiunta alle variabili (o ai segreti, se preferisci non
+mostrarla) quando si attiva l'invio: è l'indirizzo mittente verificato.
+
+Chi usa GitHub può aggiungere i segreti anche da **Settings → Secrets and
+variables → Actions**, ma il deploy da Workers Builds legge quelli del Worker:
+restano nel pannello Cloudflare.
+
+## Email
+
+1. Crea l'account su [Mailjet](https://www.mailjet.com) (6.000 email/mese,
+   200 al giorno, gratis).
+2. **Sender domains & addresses → Add a sender address**: aggiungi l'indirizzo
+   da cui vuoi scrivere e conferma il link che arriva in quella casella. Non
+   serve un dominio tuo.
+3. **API Key Management**: copia API Key e Secret Key.
+4. Sul Worker:
+
+```bash
+npx wrangler secret put MAILJET_API_KEY
+npx wrangler secret put MAILJET_SECRET_KEY
+# MAIL_FROM nelle vars di wrangler.jsonc, poi:
+npx wrangler deploy
+```
+
+Senza chiavi l'app resta in **modalità simulata**: le email vengono generate e
+restano nel registro (*Coordinamento → Registro email*), perfette per provare
+tutto il flusso. Con le chiavi, **Invia email di prova** dalla stessa sezione
+conferma il collegamento e mostra l'eventuale errore del provider parola per
+parola (mittente non verificato, chiave sbagliata...).
+
+Da notare: Mailjet non permette SMTP dalle funzioni serverless e il Worker non
+ha comunque accesso alle porte SMTP; l'API HTTPS è l'unica strada.
+
+## Riepilogo settimanale e promemoria
+
+Il Cron Trigger `0 * * * *` (in `wrangler.jsonc`) esegue ogni ora:
+
+1. il **riepilogo settimanale** delle assenze approvate per la settimana
+   successiva, ai coordinatori, una sola volta per settimana. Il giorno si
+   sceglie dall'app (*Registro email → Riepilogo ogni*): la scelta è salvata in
+   D1, quindi vale per tutti e sopravvive ai deploy. L'ora resta quella di
+   `WEEKLY_DIGEST_HOUR` (default 8);
+2. i **promemoria** per le richieste in attesa da più di `REMINDER_HOURS` ore
+   (default 24), una sola volta per richiesta.
+
+Con `SET`/`GET` in D1 il conteggio della settimana già inviata
+(`weekly_digest_week`) impedisce doppi invii anche se il Worker si riavvia.
+
+## Dati, backup, ripristino
+
+```bash
+# esporta tutto in SQL
+npx wrangler d1 export ferie-db --remote --output backup.sql
+
+# ripristino su un database nuovo
+npx wrangler d1 execute ferie-db --remote --file=cloudflare/schema.sql
+npx wrangler d1 execute ferie-db --remote --file=backup.sql
+```
+
+Stesse operazioni dal pannello: **Workers & Pages → D1 → ferie-db → Export**.
+
+Tabelle: `users`, `requests`, `meta`, `outbox`, `avatars`, `push_subscriptions`,
+`logs`, `login_attempts`.
+
+## Notifiche push
+
+Le chiavi VAPID sono state generate una volta e messe nei segreti del Worker:
+`VAPID_PUBLIC_KEY` (pubblica, nelle vars) e `VAPID_PRIVATE_JWK` (segreta). Ogni
+dispositivo che attiva le notifiche viene salvato in `push_subscriptions`; gli
+endpoint scaduti (404/410) vengono rimossi da soli.
+
+Per rigenerarle (tutti i dispositivi vanno riattivati):
+
+```bash
+npm install web-push --no-save
+npx web-push generate-vapid-keys
+```
+
+## Dominio tuo
+
+Il Worker risponde già su
+`https://ferie-synlab.espoandy99.workers.dev`. Per usare un dominio:
+
+1. **Add a site** su Cloudflare e cambia i nameserver del registrar;
+2. **Workers & Pages → ferie-synlab → Settings → Domains & Routes → Add custom
+   domain** (es. `ferie.esempio.it`): certificato e DNS sono automatici;
+3. aggiorna `APP_BASE_URL` in `wrangler.jsonc` e ridepòia: i link nelle email
+   devono puntare al nuovo indirizzo.
+
+## Sviluppo in locale
+
+```bash
+npx wrangler d1 execute ferie-db --local --file=cloudflare/schema.sql
+echo "SESSION_SECRET=$(node -e 'console.log(require("crypto").randomBytes(32).toString("hex"))')" > .dev.vars
+npx wrangler dev
+```
+
+`.dev.vars` è ignorato da git. Il database locale sta in `.wrangler/` e si può
+azzerare cancellando quella cartella (poi si riapplica lo schema).
+
+Per una **versione di prova separata** che non tocca il sito pubblico c'è
+`wrangler.port.jsonc` (Worker `ferie-cloud`, stessa D1):
+
+```bash
+npx wrangler deploy --config wrangler.port.jsonc
+```
+
+## Verifiche fatte
+
+- **50 controlli end-to-end** su Worker locale e su quello pubblico: login e
+  cookie, ruoli, creazione richiesta, sovrapposizioni, approvazione e rifiuto,
+  pagina `decide` con token, notifiche, calendario, feed `.ics`, registro email,
+  avatar protetti, cambio PIN, compleanni, disponibilità con orario, ritiro e
+  riapertura, riepilogo immediato, diagnostica, blocco dopo dieci tentativi.
+- **Persistenza**: i dati scritti su D1 restano dopo un nuovo `wrangler deploy`
+  e dopo un riavvio del Worker.
+- **Email**: con credenziali finte la richiesta arriva davvero a Mailjet, che
+  risponde 401; l'errore viene riportato nel registro e nella Diagnostica. La
+  consegna reale richiede le chiavi dell'account.
+
+## Se qualcosa non torna
+
+- **`error code: 1010`** su una chiamata da script: Cloudflare blocca alcune
+  firme non-browser sullo stile `*.workers.dev`. Basta inviare un
+  `User-Agent` di browser (i browser e le app di calendario non hanno problemi).
+- **`/api/config` risponde 500 `SESSION_SECRET non configurato`**: manca il
+  segreto (`npx wrangler secret put SESSION_SECRET`).
+- **Login sempre rifiutato**: dopo 10 tentativi per IP l'accesso resta bloccato
+  per 15 minuti (`login_attempts` in D1).
+- **Email non parte**: guarda *Registro email* o *Diagnostica → Errori
+  recenti*: il messaggio del provider dice cosa manca (mittente non verificato,
+  chiave errata, dominio non attivo).

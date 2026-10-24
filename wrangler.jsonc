@@ -1,29 +1,57 @@
 {
-  // Pubblica l'app su Cloudflare: i file di public/ come asset statici e
-  // cloudflare/worker.js come unico punto d'ingresso, che inoltra le API a ORIGIN.
+  // L'app intera su Cloudflare: Worker per le API, asset di `public/` per
+  // l'interfaccia, D1 per i dati (persistenti, senza server da mantenere).
   // La configurazione sta nella radice perché è lì che il build da GitHub
   // (Workers Builds) cerca `wrangler.jsonc` ed esegue `npx wrangler deploy`.
   //
-  // In locale, con il server Python già avviato su :8080:
-  //   npx wrangler dev --var ORIGIN:http://127.0.0.1:8080
+  // In locale:
+  //   npx wrangler d1 execute ferie-db --local --file=cloudflare/schema.sql
+  //   npx wrangler dev
   //
-  // In produzione (una volta sola: `npx wrangler login`):
+  // In produzione (i segreti restano fuori dal file):
+  //   npx wrangler d1 execute ferie-db --remote --file=cloudflare/schema.sql
+  //   npx wrangler secret put SESSION_SECRET
   //   npx wrangler deploy
   "name": "ferie-synlab",
-  "main": "cloudflare/worker.js",
+  "main": "cloudflare/app.js",
   "compatibility_date": "2026-10-01",
 
   "assets": {
     "directory": "./public",
     "binding": "ASSETS",
-    // Ogni richiesta passa dal Worker: è lui a decidere se è un file o un'API.
+    // Ogni richiesta passa dal Worker: è lui a decidere se è un file, un'API,
+    // un avatar o il feed del calendario.
     "run_worker_first": true
   },
 
-  // Indirizzo del backend Python. Cambiandolo si passa da Render a una VM o a
-  // un Cloudflare Tunnel senza toccare il codice.
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "ferie-db",
+      "database_id": "ce1f44ae-5fc5-4638-8a3c-c0b51fbd50c0"
+    }
+  ],
+
+  // Il riepilogo settimanale e i promemoria passano da qui: un controllo ogni
+  // ora, il giorno e l'ora si scelgono dall'app.
+  "triggers": {
+    "crons": ["0 * * * *"]
+  },
+
   "vars": {
-    "ORIGIN": "https://ferie-synlab.onrender.com"
+    "ORG_NAME": "Synlab Manifattura Firenze",
+    "ORG_SHORT": "Synlab",
+    "ORG_SITE": "Manifattura Firenze",
+    "ORG_BRAND": "SYNLAB",
+    "TZ": "Europe/Rome",
+    "APP_BASE_URL": "https://ferie-synlab.espoandy99.workers.dev",
+    "WEEKLY_DIGEST": "1",
+    "WEEKLY_DIGEST_WEEKDAY": "3",
+    "WEEKLY_DIGEST_HOUR": "8",
+    "REMINDER_HOURS": "24",
+    "MAIL_FROM_NAME": "Synlab Manifattura Firenze",
+    "VAPID_PUBLIC_KEY": "BJESmKWkMPU38VLyz4v60EszP9hpWt0rN-_qUjkZIq8_TZFASeaxY_Z3AM3dcuiDQxgKRNNOBzFczxv-dcddp6Q",
+    "VAPID_SUBJECT": "mailto:amministrazione@synlab.it"
   },
 
   "observability": {

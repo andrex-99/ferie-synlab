@@ -2137,13 +2137,13 @@
       ["Fuso orario", server.timezone],
       ["Avviato", formatMoment(server.started_at)],
       ["Attivo da", formatUptime(server.uptime_seconds)],
-      ["Python", server.python],
-      ["Processo", server.pid],
+      ["Runtime", server.python],
+      ["Istanza", server.pid],
       ["URL pubblico", server.base_url],
     ]));
 
-    const storageCard = diagnosticCard("Dati sul disco", diagnosticRows([
-      ["Cartella", storage.data_dir],
+    const storageCard = diagnosticCard("Dati persistenti", diagnosticRows([
+      ["Archivio", storage.data_dir],
       ["Database", storage.database],
       ["Dimensione", formatBytes(storage.database_bytes)],
       ["Ultima modifica", formatMoment(storage.database_modified)],
@@ -2153,7 +2153,7 @@
       ["Per stato", statuses],
       ["Email nel registro", counts.outbox],
       ["Allegati avatar", storage.avatar_files],
-      ["File email su disco", storage.outbox_files],
+      ["Email archiviate", storage.outbox_files],
     ]));
 
     const emailCard = diagnosticCard("Email e notifiche", diagnosticRows([
