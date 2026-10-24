@@ -485,9 +485,30 @@ class FeatureTest(unittest.TestCase):
 
         coordinator = self.login("coordinatore@studio.it")
         status, data = self.json_call(coordinator, "/api/weekly-digest", "POST", {})
-        # In demo non c'è un servizio email: il messaggio spiega cosa configurare.
-        self.assertEqual(status, 400, data)
-        self.assertIn("email", data["error"].lower())
+        # In demo il riepilogo viene comunque generato e salvato nel registro:
+        # così il messaggio si può leggere senza configurare un provider.
+        self.assertEqual(status, 200, data)
+        self.assertTrue(data["simulated"])
+        self.assertEqual(data["sent"], 1)
+        self.assertEqual(data["recipients"], ["coordinatore@studio.it"])
+        self.assertIn("Settimana prossima", data["subject"])
+
+        status, outbox = self.json_call(coordinator, "/api/outbox")
+        self.assertEqual(status, 200, outbox)
+        self.assertFalse(outbox["configured"])
+        mail = outbox["messages"][0]
+        self.assertEqual(mail["provider"], "demo")
+        self.assertEqual(mail["to"], "coordinatore@studio.it")
+        self.assertEqual(mail["subject"], data["subject"])
+
+        # E l'HTML del riepilogo è consultabile dal registro.
+        status, page = self.call(coordinator, "/api/outbox/%s" % mail["id"])
+        self.assertEqual(status, 200)
+        self.assertIn("Riepilogo settimanale", page)
+
+        # L'utente normale non vede né il registro né il riepilogo.
+        status, _ = self.json_call(giulia, "/api/outbox")
+        self.assertEqual(status, 403)
 
     def test_13_compleanno_sul_calendario_condiviso(self):
         giulia = self.login("giulia@studio.it")
@@ -549,6 +570,10 @@ class FeatureTest(unittest.TestCase):
         status, config = self.json_call(coordinator, "/api/config")
         self.assertEqual(config["weekly_digest"]["weekday"], 3)  # default: giovedì
         self.assertFalse(config["weekly_digest"]["custom_weekday"])
+        # In demo il giorno si può scegliere lo stesso: manca solo l'invio
+        # automatico, che richiede un servizio email.
+        self.assertTrue(config["weekly_digest"]["available"])
+        self.assertFalse(config["weekly_digest"]["enabled"])
 
         status, data = self.json_call(coordinator, "/api/weekly-digest/settings", "POST", {"weekday": 2})
         self.assertEqual(status, 200, data)

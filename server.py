@@ -1684,6 +1684,9 @@ class Handler(BaseHTTPRequestHandler):
             "reminder_hours": REMINDER_HOURS,
             "weekly_digest": {
                 "enabled": bool(WEEKLY_DIGEST and email_configured()),
+                # Il giorno si sceglie anche in demo: cambia solo che l'invio
+                # automatico parte quando c'è un servizio email configurato.
+                "available": bool(WEEKLY_DIGEST),
                 "weekday": digest_settings["weekday"],
                 "weekday_label": AGENDA["giorni"][digest_settings["weekday"]],
                 "hour": digest_settings["hour"],
@@ -2094,8 +2097,10 @@ class Handler(BaseHTTPRequestHandler):
         """Il coordinatore invia subito il riepilogo, senza aspettare il giorno previsto."""
         db = load_db()
         self.require_coordinator(db)
-        if not email_configured():
-            raise ApiError(400, "Nessun servizio email configurato. Imposta RESEND_API_KEY o SMTP nel file .env e riavvia.")
+        # Senza provider il riepilogo viene comunque generato e salvato nel
+        # registro email (provider "demo"): così il messaggio si può leggere e
+        # controllare anche nella demo pubblica.
+        simulated = not email_configured()
         result = run_weekly_digest(force=True)
         if result.get("errors") and not result.get("sent"):
             raise ApiError(502, "Invio non riuscito: " + "; ".join(result["errors"]))
@@ -2103,6 +2108,7 @@ class Handler(BaseHTTPRequestHandler):
                    "recipients": result.get("recipients", []),
                    "subject": result.get("subject", ""),
                    "absences": result.get("absences", 0),
+                   "simulated": simulated,
                    "week_start": result.get("week_start")}
         if result.get("errors"):
             payload["warning"] = "; ".join(result["errors"])
@@ -2126,6 +2132,7 @@ class Handler(BaseHTTPRequestHandler):
         log("Riepilogo settimanale spostato al %s" % AGENDA["giorni"][weekday])
         self.send_json({"ok": True, "weekly_digest": {
             "enabled": bool(WEEKLY_DIGEST and email_configured()),
+            "available": bool(WEEKLY_DIGEST),
             "weekday": settings["weekday"],
             "weekday_label": AGENDA["giorni"][settings["weekday"]],
             "hour": settings["hour"],

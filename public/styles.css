@@ -1295,6 +1295,7 @@ svg { width: 100%; height: 100%; display: block; }
 .digest-settings select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(0, 95, 150, .13); }
 .digest-settings select:disabled { opacity: .6; }
 .digest-time { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.digest-note { margin: 6px 0 2px; line-height: 1.45; }
 
 .request-summary {
   display: flex;

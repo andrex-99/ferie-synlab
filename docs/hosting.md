@@ -325,7 +325,10 @@ Tre controlli, in ordine, dalla radice del progetto:
    qualcosa non torna senza dover entrare nel container.
 4. **Riepilogo settimanale.** Nello stesso pannello, **Invia riepilogo
    settimanale** manda subito l'email con le assenze della settimana successiva
-   (anche vuota, così vedi il formato). L'invio automatico parte dal primo
+   (anche vuota, così vedi il formato). Anche senza un provider configurato il
+   pulsante funziona: il messaggio si genera e resta nel **registro email**
+   (provider `demo`), così il formato si controlla prima di attivare l'invio.
+   L'invio automatico parte dal primo
    controllo utile dopo `WEEKLY_DIGEST_WEEKDAY` alle `WEEKLY_DIGEST_HOUR`
    (default giovedì alle 08:00, fuso `TZ`, default `Europe/Rome`) e una sola
    volta a settimana: se il processo era spento in quel momento, il riepilogo

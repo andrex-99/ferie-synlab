@@ -2035,16 +2035,22 @@
       $("#btn-test-email").hidden = !configured;
       const digestButton = $("#btn-weekly-digest");
       if (digestButton) {
-        digestButton.hidden = !configured;
+        // Anche senza servizio email il riepilogo si genera e resta nel registro.
+        digestButton.hidden = false;
         digestButton.title = digest?.enabled
           ? `Riepilogo automatico ogni ${digest.weekday_label} dalle ${String(digest.hour).padStart(2, "0")}:00. Tocca per inviarlo subito.`
-          : "Riepilogo delle assenze approvate per la settimana prossima.";
+          : "Riepilogo delle assenze approvate per la settimana prossima. In modalità simulata resta nel registro email.";
       }
       const digestSettings = $("#digest-settings");
+      const digestNote = $("#digest-note");
       const digestWeekday = $("#digest-weekday");
       if (digestSettings && digestWeekday) {
-        const available = configured && !!digest?.enabled;
+        const available = !!digest?.available;
         digestSettings.hidden = !available;
+        if (digestNote) {
+          digestNote.hidden = !available || configured;
+          digestNote.textContent = "Senza un servizio email il riepilogo non parte da solo: puoi generarlo qui sopra.";
+        }
         if (available) {
           if (!digestWeekday.options.length) {
             digestWeekday.innerHTML = WEEKDAYS.slice(1).concat(WEEKDAYS[0])
@@ -2735,7 +2741,12 @@
         try {
           const result = await api("/api/weekly-digest", { method: "POST", body: {} });
           const count = result.sent || 0;
-          if (result.warning) {
+          if (result.simulated) {
+            const empty = !result.absences;
+            toast(empty
+              ? "Riepilogo generato senza assenze approvate: lo trovi nel registro email."
+              : `Riepilogo creato in modalità simulata (${result.absences} ${result.absences === 1 ? "assenza" : "assenze"}): lo trovi nel registro email.`, "success");
+          } else if (result.warning) {
             toast(`Riepilogo inviato con errori: ${result.warning}`, "error");
           } else {
             toast(`Riepilogo inviato a ${count} ${count === 1 ? "coordinatore" : "coordinatori"}.`, "success");
