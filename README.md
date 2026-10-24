@@ -133,7 +133,8 @@ cp .env.example .env
 | `ORG_SITE` | Sede mostrata sotto il nome (default `Manifattura Firenze`) |
 | `ORG_BRAND` | Marchio mostrato accanto alla sede (default `SYNLAB`) |
 | `APP_BASE_URL` | URL pubblico dell'app (es. `https://ferie.iltuostudio.it`), usato nei link delle email |
-| `RESEND_API_KEY` | Chiave API [Resend](https://resend.com) per l'invio email via HTTPS |
+| `RESEND_API_KEY` | Chiave API [Resend](https://resend.com) per l'invio email via HTTPS (richiede un dominio verificato) |
+| `MAILJET_API_KEY`, `MAILJET_SECRET_KEY` | Credenziali [Mailjet](https://www.mailjet.com): invio via HTTPS con mittente verificato per email, senza dominio e senza SMTP |
 | `MAIL_FROM` | Mittente verificato, es. `ferie@iltuostudio.it` |
 | `MAIL_FROM_NAME` | Nome mittente |
 | `MAIL_REPLY_TO` | Reply-To facoltativo (es. email del coordinatore) |
@@ -148,7 +149,7 @@ cp .env.example .env
 | `TZ` | Fuso orario con cui viene calcolata l'ora del riepilogo (default `Europe/Rome`) |
 | `VAPID_SUBJECT` | Contatto (`mailto:` o URL) incluso nelle notifiche push; default `MAIL_FROM` |
 
-Sono supportati sia **Resend** sia un normale **SMTP**. Senza nessuno dei due resta attiva la modalità simulata.
+Sono supportati **Resend**, **Mailjet** (API HTTPS) e un normale **SMTP**. Senza nessuno dei tre resta attiva la modalità simulata. Attenzione: il piano gratuito di **Render blocca le porte SMTP in uscita** (25, 465, 587), quindi lì servono per forza Resend o Mailjet.
 
 ### Cosa contiene ogni email
 
@@ -166,6 +167,21 @@ Tutte le email sono responsive (Gmail, Outlook, Apple Mail), hanno una versione 
 1. Crea un account e verifica il dominio del mittente.
 2. Genera una chiave API.
 3. Imposta `RESEND_API_KEY` e `MAIL_FROM` nel `.env` e riavvia il server.
+
+### Mittente Mailjet (senza dominio)
+
+1. Crea un account su [mailjet.com](https://www.mailjet.com) e aggiungi il
+   mittente in **Sender domains & addresses → Add a sender address**: Mailjet
+   manda un link alla casella, cliccalo per verificarla.
+2. Da **API Key Management** prendi **API Key** e **Secret Key**.
+3. Nelle variabili d'ambiente: `MAILJET_API_KEY`, `MAILJET_SECRET_KEY`,
+   `MAIL_FROM` (l'indirizzo verificato), `MAIL_FROM_NAME`.
+4. Dal registro email premi **Invia email di prova**: se il provider risponde, il
+   registro mostra `mailjet` e il messaggio arriva.
+
+Senza dominio il mittente è una casella normale (Gmail, Aruba…): funziona, ma i
+filtri antispam possono penalizzarla. Con un dominio tuo si passa a Resend, che
+autentica SPF e DKIM e consegna meglio.
 
 ### Mittente SMTP
 

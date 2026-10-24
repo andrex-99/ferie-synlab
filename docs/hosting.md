@@ -241,14 +241,20 @@ scelta consigliata.
 
 ## Quale provider email usare
 
-L'app supporta **Resend** e un normale **SMTP**: non serve modificare codice,
-solo variabili in `.env`.
+L'app supporta **Resend**, **Mailjet** (entrambi via API HTTPS) e un normale
+**SMTP**: non serve modificare codice, solo variabili in `.env`.
 
 | Provider | Gratis | Serve un dominio tuo? | Carta |
 | --- | --- | --- | --- |
 | **Gmail + password per le app** | 500 destinatari/giorno | **no** | no |
 | **Brevo (SMTP)** | 300 email/giorno | no, ma un mittente su dominio gratuito può finire in spam | no |
 | **Resend** | 3.000/mese, 100/giorno | **sì**, verificato con record DNS | no |
+| **Mailjet (API HTTPS)** | 6.000/mese, 200/giorno | no: basta verificare l'indirizzo mittente via email; con il dominio si consegna meglio | no |
+
+**Se il backend è su Render gratuito, SMTP non è un'opzione**: Render blocca le
+connessioni in uscita sulle porte 25, 465 e 587. Lì servono le API HTTPS, quindi
+**Resend** (con dominio verificato) o **Mailjet** (anche con solo l'indirizzo
+mittente verificato).
 
 **Consiglio pratico:** parti con **Gmail** (zero configurazione, arriva davvero a
 colleghi su Gmail, Outlook, Libero, Tiscali), e passa a **Resend** quando avrai un

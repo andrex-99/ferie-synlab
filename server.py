@@ -151,6 +151,10 @@ ORG_SITE = os.environ.get("ORG_SITE", "Manifattura Firenze")
 ORG_BRAND = os.environ.get("ORG_BRAND", "SYNLAB")
 APP_BASE_URL = os.environ.get("APP_BASE_URL", "").rstrip("/")
 RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "").strip()
+# Mailjet usa API HTTPS con due chiavi: funziona anche dove le porte SMTP in
+# uscita sono bloccate (per esempio il piano gratuito di Render).
+MAILJET_API_KEY = os.environ.get("MAILJET_API_KEY", "").strip()
+MAILJET_SECRET_KEY = os.environ.get("MAILJET_SECRET_KEY", "").strip()
 MAIL_FROM = os.environ.get("MAIL_FROM", "").strip()
 MAIL_FROM_NAME = os.environ.get("MAIL_FROM_NAME", "Synlab Manifattura Firenze").strip()
 MAIL_REPLY_TO = os.environ.get("MAIL_REPLY_TO", "").strip()
@@ -182,8 +186,22 @@ ORG_TZ = os.environ.get("TZ", "Europe/Rome").strip() or "Europe/Rome"
 VAPID_SUBJECT = os.environ.get("VAPID_SUBJECT", "").strip()
 
 
+def email_provider():
+    """Quale servizio invia davvero: resend, mailjet, smtp oppure demo."""
+    if RESEND_API_KEY and MAIL_FROM:
+        return "resend"
+    if MAILJET_API_KEY and MAILJET_SECRET_KEY and MAIL_FROM:
+        return "mailjet"
+    if SMTP_HOST and MAIL_FROM:
+        return "smtp"
+    return "demo"
+
+
+PROVIDER_LABELS = {"resend": "Resend", "mailjet": "Mailjet", "smtp": "SMTP", "demo": "demo"}
+
+
 def email_configured():
-    return bool(RESEND_API_KEY and MAIL_FROM) or bool(SMTP_HOST and MAIL_FROM)
+    return email_provider() != "demo"
 
 
 def local_now():
@@ -850,6 +868,26 @@ def note_block(note):
             % html.escape(note).replace("\n", "<br>"))
 
 
+def post_json(url, payload, headers, timeout=20):
+    """POST JSON verso il provider. Se rifiuta, riporta il motivo vero.
+
+    urllib da solo direbbe solo «HTTP Error 400»: qui si legge il corpo della
+    risposta, che è dove Resend e Mailjet spiegano cosa non va (mittente non
+    verificato, chiave sbagliata, dominio non attivo).
+    """
+    request = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"),
+                                     headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return response.read()
+    except urllib.error.HTTPError as exc:
+        try:
+            detail = exc.read().decode("utf-8", "replace").strip()[:400]
+        except Exception:
+            detail = ""
+        raise RuntimeError("HTTP %s: %s" % (exc.code, detail or exc.reason))
+
+
 def send_mail(to, subject, html_body, text_body=None, attachments=None,
               reply_to=None, idempotency_key=None):
     """Invia via Resend o SMTP. Senza credenziali salva nella posta simulata."""
@@ -892,15 +930,34 @@ def send_mail(to, subject, html_body, text_body=None, attachments=None,
                        "Content-Type": "application/json"}
             if idempotency_key:
                 headers["Idempotency-Key"] = idempotency_key[:256]
-            request = urllib.request.Request(
-                "https://api.resend.com/emails",
-                data=json.dumps(payload).encode("utf-8"),
-                headers=headers,
-                method="POST",
-            )
-            with urllib.request.urlopen(request, timeout=20) as response:
-                response.read()
+            post_json("https://api.resend.com/emails", payload, headers)
             provider = "resend"
+        elif MAILJET_API_KEY and MAILJET_SECRET_KEY and MAIL_FROM:
+            message = {
+                "From": {"Email": MAIL_FROM, "Name": MAIL_FROM_NAME},
+                "To": [{"Email": to}],
+                "Subject": subject,
+                "HTMLPart": html_body,
+            }
+            if text_body:
+                message["TextPart"] = text_body
+            reply = reply_to or MAIL_REPLY_TO
+            if reply:
+                message["ReplyTo"] = {"Email": reply}
+            if attachments:
+                message["Attachments"] = [{"ContentType": "text/calendar; charset=utf-8",
+                                           "Filename": name, "Base64Content": content}
+                                          for name, content in attachments]
+            if idempotency_key:
+                # Mailjet non ha una chiave di idempotenza: CustomID viaggia con
+                # il messaggio e rende riconoscibile un eventuale doppione.
+                message["CustomID"] = idempotency_key[:255]
+            credentials = base64.b64encode(
+                ("%s:%s" % (MAILJET_API_KEY, MAILJET_SECRET_KEY)).encode("utf-8")).decode("ascii")
+            post_json("https://api.mailjet.com/v3.1/send", {"Messages": [message]},
+                      {"Authorization": "Basic " + credentials,
+                       "Content-Type": "application/json"})
+            provider = "mailjet"
         elif SMTP_HOST and MAIL_FROM:
             message = EmailMessage()
             message["From"] = formataddr((MAIL_FROM_NAME, MAIL_FROM))
@@ -1328,7 +1385,7 @@ def test_email_html(to):
             'correttamente.</p>')
     body += ('<div style="background:#f5f9fc;border-radius:14px;padding:16px 18px;margin:0 0 18px;font-size:14px;">'
              '<strong>Destinatario:</strong> %s<br><strong>Server:</strong> %s'
-             '</div>' % (html.escape(to), html.escape("Resend" if RESEND_API_KEY else "SMTP")))
+             '</div>' % (html.escape(to), html.escape(PROVIDER_LABELS.get(email_provider(), "demo"))))
     body += '<p style="margin:0;font-size:14px;color:#5a655e;">Da ora il team riceve '
     body += 'notifiche ed esiti delle richieste.</p>'
     page = email_shell("Email di prova", "Configurazione", body,
@@ -2084,7 +2141,7 @@ class Handler(BaseHTTPRequestHandler):
         db = load_db()
         coord = self.require_coordinator(db)
         if not email_configured():
-            raise ApiError(400, "Nessun servizio email configurato. Imposta RESEND_API_KEY o SMTP nel file .env e riavvia.")
+            raise ApiError(400, "Nessun servizio email configurato. Imposta RESEND_API_KEY, MAILJET_API_KEY e MAILJET_SECRET_KEY, oppure SMTP, e riavvia.")
         subject, body, text = test_email_html(coord["email"])
         mail = send_mail(coord["email"], subject, body, text,
                          reply_to=(MAIL_REPLY_TO or coord["email"]),
@@ -2772,8 +2829,7 @@ def diagnostics_snapshot(db=None):
     for req in db.get("requests", []):
         status = req.get("status") or "sconosciuto"
         statuses[status] = statuses.get(status, 0) + 1
-    provider = "resend" if RESEND_API_KEY and MAIL_FROM else (
-        "smtp" if SMTP_HOST and MAIL_FROM else "demo")
+    provider = email_provider()
     digest_settings = weekly_digest_settings(db)
     meta = db.get("meta") or {}
     outbox = db.get("outbox", [])

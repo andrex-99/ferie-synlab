@@ -5,7 +5,9 @@
     python3 -m unittest discover -s tests -v
 """
 
+import base64
 import http.cookiejar
+import io
 import json
 import os
 import secrets
@@ -643,6 +645,82 @@ class FeatureTest(unittest.TestCase):
         # La diagnostica resta chiusa a chi non è amministratore.
         status, data = self.json_call(giulia, "/api/admin/diagnostics")
         self.assertEqual(status, 403, data)
+
+
+class MailjetTest(unittest.TestCase):
+    """Invio via Mailjet: API HTTPS con due chiavi, senza SMTP."""
+
+    class FakeResponse:
+        def read(self):
+            return b'{"Messages": [{"Status": "success"}]}'
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def test_provider_scelto_per_priorita(self):
+        with mock.patch.multiple(server, RESEND_API_KEY="", MAILJET_API_KEY="k",
+                                 MAILJET_SECRET_KEY="s", MAIL_FROM="ferie@studio.it",
+                                 SMTP_HOST=""):
+            self.assertEqual(server.email_provider(), "mailjet")
+            self.assertTrue(server.email_configured())
+            # Con la chiave pubblica ma senza quella privata non si invia.
+            with mock.patch.object(server, "MAILJET_SECRET_KEY", ""):
+                self.assertEqual(server.email_provider(), "demo")
+                self.assertFalse(server.email_configured())
+
+    def test_errore_del_provider_riportato(self):
+        # Senza questo, il registro direbbe solo «HTTP Error 401» senza il motivo.
+        def fake_urlopen(request, timeout=0):
+            raise urllib.error.HTTPError(
+                "https://api.mailjet.com/v3.1/send", 401, "Unauthorized", {},
+                io.BytesIO(b'{"ErrorMessage": "sender not validated"}'))
+
+        with mock.patch("urllib.request.urlopen", fake_urlopen):
+            with self.assertRaises(RuntimeError) as failure:
+                server.post_json("https://api.mailjet.com/v3.1/send", {}, {})
+        self.assertIn("401", str(failure.exception))
+        self.assertIn("sender not validated", str(failure.exception))
+
+    def test_invio_con_allegato_ics(self):
+        captured = {}
+
+        def fake_urlopen(request, timeout=0):
+            captured["url"] = request.full_url
+            captured["auth"] = request.get_header("Authorization")
+            captured["body"] = json.loads(request.data.decode("utf-8"))
+            return self.FakeResponse()
+
+        db = {"users": [], "requests": [], "outbox": [], "meta": {}}
+        with tempfile.TemporaryDirectory() as outbox_dir, \
+                mock.patch.multiple(
+                    server, RESEND_API_KEY="", MAILJET_API_KEY="pub",
+                    MAILJET_SECRET_KEY="priv", MAIL_FROM="ferie@studio.it",
+                    MAIL_FROM_NAME="Synlab", MAIL_REPLY_TO="", SMTP_HOST="",
+                    OUTBOX_DIR=Path(outbox_dir),
+                    load_db=mock.Mock(side_effect=lambda: db), save_db=mock.Mock()), \
+                mock.patch("urllib.request.urlopen", fake_urlopen):
+            entry = server.send_mail("giulia@studio.it", "Esito", "<p>ok</p>", "ok",
+                                     attachments=[("ferie.ics", "QUJD")],
+                                     reply_to="giulia@studio.it", idempotency_key="digest-1")
+
+        self.assertEqual(entry["provider"], "mailjet")
+        self.assertIsNone(entry["error"])
+        self.assertEqual(captured["url"], "https://api.mailjet.com/v3.1/send")
+        self.assertEqual(captured["auth"],
+                         "Basic " + base64.b64encode(b"pub:priv").decode("ascii"))
+        message = captured["body"]["Messages"][0]
+        self.assertEqual(message["From"], {"Email": "ferie@studio.it", "Name": "Synlab"})
+        self.assertEqual(message["To"], [{"Email": "giulia@studio.it"}])
+        self.assertEqual(message["Subject"], "Esito")
+        self.assertEqual(message["HTMLPart"], "<p>ok</p>")
+        self.assertEqual(message["TextPart"], "ok")
+        self.assertEqual(message["ReplyTo"], {"Email": "giulia@studio.it"})
+        self.assertEqual(message["CustomID"], "digest-1")
+        self.assertEqual(message["Attachments"][0]["Filename"], "ferie.ics")
+        self.assertEqual(message["Attachments"][0]["Base64Content"], "QUJD")
 
 
 class AdminPolicyTest(unittest.TestCase):
