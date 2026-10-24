@@ -17,7 +17,70 @@ senza toccare il codice, ma la macchina deve restare accesa. Per averla **dentro
 Cloudflare bisogna riscrivere il server: è un lavoro di più giornate, non una
 configurazione.
 
-## 2. Fase 1 — Cloudflare davanti all'app (pronta)
+### Se hai già un progetto Cloudflare Pages
+
+Pages collegato a GitHub pubblica da solo a ogni push, ma **non esegue questo
+backend**:
+
+- le **Pages Functions** sono documentate per JavaScript/TypeScript; Python è un
+  linguaggio dei **Worker**, non delle Functions. Una Function può chiamare un
+  Worker Python con un *service binding*, ma è un secondo pezzo da scrivere;
+- su Pages **non esistono i Cron Trigger**, quindi promemoria e riepilogo
+  settimanale non potrebbero girare lì;
+- D1 e R2 invece sono disponibili come binding anche su Pages, e il progetto ha
+  un URL `*.pages.dev` gratis, senza dominio;
+- un dominio personalizzato su un sottodominio si può agganciare anche con un
+  CNAME esterno, ma per un dominio *apex* serve la zona su Cloudflare.
+
+Quindi Pages va bene per **servire il frontend** (`public/` è già tutto statico),
+mentre l'API resta sul server Python raggiunto dal tunnel; in alternativa si
+riscrive l'API come Worker. Il frontend oggi chiama `/api/...` in modo relativo
+con `credentials: "same-origin"`: per separare i due pezzi servirebbe lo stesso
+dominio (Pages + Function che inoltra `/api` al tunnel) oppure CORS, cookie
+`SameSite=None; Secure` e una base URL configurabile nel client.
+
+## 2. Fase 0 — Worker su `workers.dev` (fatto, online)
+
+Il sito è pubblicato su Cloudflare e **funziona**: `https://ferie-synlab.espoandy99.workers.dev`
+serve l'interfaccia e inoltra le API al server Python, sullo stesso hostname
+(quindi cookie di sessione compresi).
+
+Come è fatto:
+
+- [`cloudflare/worker.js`](../cloudflare/worker.js) — serve i file di `public/` con
+  il binding `ASSETS` e inoltra solo `/api/*` e `/calendar.ics` a `ORIGIN`.
+  Riscrive `Origin` (altrimenti il server risponde `403` ai `POST`) e
+  `X-Forwarded-Proto` (così il cookie è `Secure` in HTTPS e non in locale).
+- [`cloudflare/wrangler.jsonc`](../cloudflare/wrangler.jsonc) — nome `ferie-synlab`,
+  asset da `../public`, `run_worker_first: true`, variabile `ORIGIN`.
+- [`cloudflare/package.json`](../cloudflare/package.json) — solo `wrangler` come
+  dipendenza di sviluppo.
+
+Comandi (Node e `wrangler` non sono installati nel sistema: sono in `.tools/`,
+ignorato da git — `export PATH="$PWD/../.tools/node/bin:$PATH"`):
+
+```bash
+cd cloudflare
+npx wrangler dev --var ORIGIN:http://127.0.0.1:8080   # locale, senza login
+npx wrangler deploy                                  # pubblica su workers.dev
+npx wrangler deploy --var ORIGIN:https://ferie.tuodominio.it
+```
+
+Cambiare `ORIGIN` è l'unico passaggio per spostare il backend da Render a una VM
+o a un tunnel: il frontend e i cookie restano su Cloudflare.
+
+Cosa **non** risolve: il backend continua a girare su Render (piano gratuito),
+quindi si addormenta dopo 15 minuti e azzera i dati a ogni deploy. Il passo
+successivo per l'uso reale è mettere `ORIGIN` su una VM con disco persistente
+(fase 1) e, se si vuole, riscrivere tutto dentro Cloudflare (fase 2).
+
+Verificato il 24 ottobre 2026 su quell'URL: pagina `200`, CSS/JS `200`,
+`/api/config` `200`, login `200` con cookie, `/api/session` con il nome utente,
+`POST /api/requests` `201`, approvazione `200`, riepilogo `200`, logout che
+cancella il cookie; anche dal browser la schermata di accesso e la vista
+coordinatore caricano (4 persone, registro email, selettore del riepilogo).
+
+## 3. Fase 1 — Cloudflare davanti all'app (pronta)
 
 Già preparato in questo repository:
 
@@ -73,7 +136,7 @@ Limite della fase 1: se la macchina si spegne o dorme, il sito non risponde. È
 il motivo per cui per un'app di team resta consigliata una VM sempre accesa
 (vedi [hosting.md](hosting.md)).
 
-## 3. Fase 2 — L'app dentro Cloudflare (da fare)
+## 4. Fase 2 — L'app dentro Cloudflare (da fare)
 
 Riferimenti verificati sulla documentazione Cloudflare: Python Workers è **GA**
 dal 21 settembre 2026 e gira su **Pyodide** (WebAssembly) dentro l'isolate, con
@@ -132,25 +195,52 @@ sul piano a pagamento e il disco locale è azzerato a ogni stop.
   Meglio finire la fase 2 su un branch e tenere Render/VM come fallback finché i
   test non passano tutti.
 
-## 4. Cosa serve da te
+## 5. Cosa serve da te
 
-1. **Account Cloudflare** (gratis) e, per un hostname stabile, **un dominio con i
-   nameserver su Cloudflare**. Senza dominio si può solo usare un URL
-   `trycloudflare.com` temporaneo.
-2. **Scelta della strada**: fermarsi al Tunnel (nessuna riscrittura) oppure
-   partire con Workers + D1 (riscrittura, più giornate).
-3. Per la fase 2: **Node 20+ e `wrangler`** su questa macchina (oggi non ci sono)
-   e un `wrangler login` (o un token API) per creare D1 e pubblicare il Worker.
-4. Se si sceglie Workers Paid o Containers: **carta** sul piano (~5 $/mese).
+1. **Account Cloudflare** (c'è, l'hai autorizzato con `wrangler login`) — serve
+   solo per pubblicare: da qui in avanti `npx wrangler deploy` è sufficiente.
+2. **Dominio**, se vuoi `ferie.qualcosa.it` al posto di `workers.dev`: un
+   sottodominio si può agganciare anche senza spostare i nameserver; per l'apex
+   serve la zona su Cloudflare.
+3. Per l'uso reale del team: **una VM sempre accesa** con `data/` sul disco, che
+   diventa l'`ORIGIN` del Worker.
+4. Solo per la fase 2 (riscrittura): carta per Workers Paid se il piano gratuito
+   non basta di CPU.
 
-## 5. Stato del lavoro
+## 6. Percorso scelto (24 ottobre 2026)
+
+- **Scelto e già attivo**: Cloudflare serve il sito e inoltra le API
+  (`worker.js` + asset), backend su Render per ora. URL:
+  `https://ferie-synlab.espoandy99.workers.dev`.
+- **Dominio**: `radiologiamf.it` non è registrato (il registro `.it` risponde
+  `Status: AVAILABLE`, il DNS `NXDOMAIN`). Finché non esiste, non c'è nessuna
+  zona da mettere su Cloudflare né record da puntare a un tunnel: si resta su
+  `workers.dev`, che funziona ed è gratis.
+- Quando il dominio esisterà, in ordine:
+  1. registrarlo presso un registrar che gestisca `.it`;
+  2. **Add a site** su Cloudflare e prendere i nameserver assegnati;
+  3. cambiare i nameserver dal registrar e attendere l'attivazione della zona;
+  4. **Workers → ferie-synlab → Settings → Domains & Routes → Add custom domain**
+     (in alternativa, tunnel con `deploy/cloudflare/tunnel.yml` verso la VM);
+  5. aggiornare `APP_BASE_URL` sul backend con l'indirizzo pubblico, così i link
+     nelle email puntano lì.
+- Il token del tunnel o qualsiasi altro segreto va solo nel `.env` della VM o nei
+  Secrets di Cloudflare, mai nel repository.
+
+## 7. Stato del lavoro
 
 - [x] Ricognizione di cosa Cloudflare sa fare oggi (Workers Python GA, Containers
       GA a pagamento, Tunnel gratuito).
 - [x] Config del tunnel con nome + variante Docker + token nel `.env.example`.
 - [x] Prova end-to-end con quick tunnel (HTTP, asset, cookie, login).
-- [ ] Dominio e tunnel con nome attivi su un hostname tuo.
-- [ ] Decisione sulla fase 2.
+- [x] Worker su Cloudflare con asset statici + proxy API, online su
+      `https://ferie-synlab.espoandy99.workers.dev`.
+- [ ] `APP_BASE_URL` sul backend uguale all'URL pubblico, così i link nelle
+      email puntano al sito su Cloudflare e non a Render.
+- [ ] Backend su una VM con disco persistente (`ORIGIN` aggiornato).
+- [ ] Dominio personalizzato per il Worker (facoltativo: si può agganciare anche
+      senza spostare i nameserver).
+- [ ] Decisione sulla fase 2 (riscrittura su D1).
 - [ ] Schema D1, import dei dati, Worker, cron, push.
 
 ## Fonti

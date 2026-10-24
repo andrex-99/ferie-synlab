@@ -1,0 +1,30 @@
+{
+  // Pubblica l'app su Cloudflare: i file di public/ come asset statici e
+  // worker.js come unico punto d'ingresso, che inoltra le API a ORIGIN.
+  //
+  // In locale, con il server Python già avviato su :8080:
+  //   cd cloudflare && npx wrangler dev --var ORIGIN:http://127.0.0.1:8080
+  //
+  // In produzione (una volta sola: `npx wrangler login`):
+  //   cd cloudflare && npx wrangler deploy
+  "name": "ferie-synlab",
+  "main": "worker.js",
+  "compatibility_date": "2026-10-01",
+
+  "assets": {
+    "directory": "../public",
+    "binding": "ASSETS",
+    // Ogni richiesta passa dal Worker: è lui a decidere se è un file o un'API.
+    "run_worker_first": true
+  },
+
+  // Indirizzo del backend Python. Cambiandolo si passa da Render a una VM o a
+  // un Cloudflare Tunnel senza toccare il codice.
+  "vars": {
+    "ORIGIN": "https://ferie-synlab.onrender.com"
+  },
+
+  "observability": {
+    "enabled": true
+  }
+}

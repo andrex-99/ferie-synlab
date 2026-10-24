@@ -1,0 +1,48 @@
+name: Deploy su Cloudflare
+
+# Pubblica il Worker (asset di public/ + proxy API) a ogni push su main.
+# Resta inerte finché il repository non ha i due secret:
+#   CLOUDFLARE_API_TOKEN   (My Profile → API Tokens → Edit Cloudflare Workers)
+#   CLOUDFLARE_ACCOUNT_ID  (Dashboard → Workers & Pages, colonna a destra)
+on:
+  push:
+    branches: [main]
+    paths:
+      - "public/**"
+      - "cloudflare/**"
+      - ".github/workflows/cloudflare.yml"
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cloudflare
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: check
+        env:
+          TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          if [ -n "$TOKEN" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Nessun CLOUDFLARE_API_TOKEN: salto il deploy."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-node@v4
+        if: steps.check.outputs.ready == 'true'
+        with:
+          node-version: "22"
+
+      - if: steps.check.outputs.ready == 'true'
+        run: npm install --no-audit --no-fund
+
+      - if: steps.check.outputs.ready == 'true'
+        run: npx wrangler deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
