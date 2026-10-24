@@ -51,16 +51,15 @@ Come è fatto:
   il binding `ASSETS` e inoltra solo `/api/*` e `/calendar.ics` a `ORIGIN`.
   Riscrive `Origin` (altrimenti il server risponde `403` ai `POST`) e
   `X-Forwarded-Proto` (così il cookie è `Secure` in HTTPS e non in locale).
-- [`cloudflare/wrangler.jsonc`](../cloudflare/wrangler.jsonc) — nome `ferie-synlab`,
-  asset da `../public`, `run_worker_first: true`, variabile `ORIGIN`.
-- [`cloudflare/package.json`](../cloudflare/package.json) — solo `wrangler` come
-  dipendenza di sviluppo.
+- [`wrangler.jsonc`](../wrangler.jsonc) — **alla radice**, perché è lì che il
+  build da GitHub cerca la configurazione: nome `ferie-synlab`, asset da
+  `./public`, `run_worker_first: true`, variabile `ORIGIN`.
+- [`package.json`](../package.json) — solo `wrangler` come dipendenza di sviluppo.
 
 Comandi (Node e `wrangler` non sono installati nel sistema: sono in `.tools/`,
-ignorato da git — `export PATH="$PWD/../.tools/node/bin:$PATH"`):
+ignorato da git — `export PATH="$PWD/.tools/node/bin:$PATH"`), dalla radice:
 
 ```bash
-cd cloudflare
 npx wrangler dev --var ORIGIN:http://127.0.0.1:8080   # locale, senza login
 npx wrangler deploy                                  # pubblica su workers.dev
 npx wrangler deploy --var ORIGIN:https://ferie.tuodominio.it

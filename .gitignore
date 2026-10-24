@@ -6,8 +6,8 @@ __pycache__/
 
 # Toolchain locale per Cloudflare (Node scaricato in locale, wrangler, build)
 .tools/
-cloudflare/node_modules/
-cloudflare/.wrangler/
-cloudflare/.dev.vars
+node_modules/
+.wrangler/
+.dev.vars
 # Token API Cloudflare, se lo metti in un file (non va mai committato)
 .cloudflare-token

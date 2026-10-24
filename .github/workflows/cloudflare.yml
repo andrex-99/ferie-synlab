@@ -10,15 +10,15 @@ on:
     paths:
       - "public/**"
       - "cloudflare/**"
+      - "wrangler.jsonc"
+      - "package.json"
+      - "package-lock.json"
       - ".github/workflows/cloudflare.yml"
   workflow_dispatch:
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: cloudflare
     steps:
       - uses: actions/checkout@v4
 

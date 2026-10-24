@@ -1,18 +1,20 @@
 {
   // Pubblica l'app su Cloudflare: i file di public/ come asset statici e
-  // worker.js come unico punto d'ingresso, che inoltra le API a ORIGIN.
+  // cloudflare/worker.js come unico punto d'ingresso, che inoltra le API a ORIGIN.
+  // La configurazione sta nella radice perché è lì che il build da GitHub
+  // (Workers Builds) cerca `wrangler.jsonc` ed esegue `npx wrangler deploy`.
   //
   // In locale, con il server Python già avviato su :8080:
-  //   cd cloudflare && npx wrangler dev --var ORIGIN:http://127.0.0.1:8080
+  //   npx wrangler dev --var ORIGIN:http://127.0.0.1:8080
   //
   // In produzione (una volta sola: `npx wrangler login`):
-  //   cd cloudflare && npx wrangler deploy
+  //   npx wrangler deploy
   "name": "ferie-synlab",
-  "main": "worker.js",
+  "main": "cloudflare/worker.js",
   "compatibility_date": "2026-10-01",
 
   "assets": {
-    "directory": "../public",
+    "directory": "./public",
     "binding": "ASSETS",
     // Ogni richiesta passa dal Worker: è lui a decidere se è un file o un'API.
     "run_worker_first": true
